@@ -82,6 +82,26 @@ describe("projectPersistence media compatibility", () => {
 		expect(normalizeProjectEditor({ webcamMirrored: "yes" as never }).webcamMirrored).toBe(false);
 	});
 
+	it("preserves optional native cursor presentation extensions", () => {
+		expect(
+			normalizeProjectEditor({
+				cursorShow: true,
+				cursorSize: 3,
+				cursorSmoothing: 0.67,
+				cursorMotionBlur: 0.2,
+				cursorClickBounce: 2.5,
+				cursorClipToBounds: false,
+			}),
+		).toMatchObject({
+			cursorShow: true,
+			cursorSize: 3,
+			cursorSmoothing: 0.67,
+			cursorMotionBlur: 0.2,
+			cursorClickBounce: 2.5,
+			cursorClipToBounds: false,
+		});
+	});
+
 	it("normalizes blur region type and mosaic block size safely", () => {
 		const editor = normalizeProjectEditor({
 			annotationRegions: [

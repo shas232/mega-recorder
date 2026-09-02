@@ -1,4 +1,6 @@
 {
+	"contract": "mega-recorder-project",
+	"schemaVersion": 1,
 	"project": {
 		"name": "MEGA RECORDER",
 		"kind": "team-fork-baseline",
@@ -9,6 +11,18 @@
 		"upstreamPackageVersion": "1.10.0",
 		"license": "MIT",
 		"attributionFiles": ["LICENSE", "THIRD-PARTY-NOTICES.md"]
+	},
+	"productLayer": {
+		"cli": "scripts/mega-recorder-cli.mjs",
+		"preset": { "id": "blue-studio", "version": 1 },
+		"manifestSchema": "schemas/mega-recorder-project-manifest.schema.json",
+		"kokoro": {
+			"runtime": "local-python",
+			"model": "hexgrad/Kokoro-82M",
+			"sampleRate": 24000,
+			"network": "disabled"
+		},
+		"verification": "ffprobe"
 	},
 	"source": {
 		"selectedFrom": "https://github.com/getopenscreen/openscreen.git",

@@ -94,6 +94,15 @@ export interface ProjectEditorState {
 	gifLoop: boolean;
 	gifSizePreset: GifSizePreset;
 	cursorTheme: string;
+	/** Optional cursor presentation extensions consumed by the native compositor.
+	 * They are absent from older projects and intentionally stay optional so the
+	 * legacy editor keeps its historical shape. */
+	cursorShow?: boolean;
+	cursorSize?: number;
+	cursorSmoothing?: number;
+	cursorMotionBlur?: number;
+	cursorClickBounce?: number;
+	cursorClipToBounds?: boolean;
 }
 
 export interface EditorProjectData {
@@ -551,6 +560,20 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 			editor.gifSizePreset === "original"
 				? editor.gifSizePreset
 				: DEFAULT_GIF_SETTINGS.sizePreset,
+		...(typeof editor.cursorShow === "boolean" ? { cursorShow: editor.cursorShow } : {}),
+		...(isFiniteNumber(editor.cursorSize) ? { cursorSize: clamp(editor.cursorSize, 0.5, 10) } : {}),
+		...(isFiniteNumber(editor.cursorSmoothing)
+			? { cursorSmoothing: clamp(editor.cursorSmoothing, 0, 1) }
+			: {}),
+		...(isFiniteNumber(editor.cursorMotionBlur)
+			? { cursorMotionBlur: clamp(editor.cursorMotionBlur, 0, 1) }
+			: {}),
+		...(isFiniteNumber(editor.cursorClickBounce)
+			? { cursorClickBounce: clamp(editor.cursorClickBounce, 0, 5) }
+			: {}),
+		...(typeof editor.cursorClipToBounds === "boolean"
+			? { cursorClipToBounds: editor.cursorClipToBounds }
+			: {}),
 	};
 }
 

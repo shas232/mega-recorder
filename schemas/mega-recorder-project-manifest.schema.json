@@ -1,0 +1,61 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://getopenscreen.com/schemas/mega-recorder-project-manifest.v1.json",
+	"title": "MEGA RECORDER project manifest",
+	"type": "object",
+	"required": [
+		"contract",
+		"schemaVersion",
+		"project",
+		"preset",
+		"kokoro",
+		"inputs",
+		"outputs",
+		"verification"
+	],
+	"properties": {
+		"contract": { "const": "mega-recorder-project" },
+		"schemaVersion": { "const": 1 },
+		"project": {
+			"type": "object",
+			"required": ["name", "upstreamCommit"],
+			"properties": {
+				"name": { "const": "MEGA RECORDER" },
+				"upstreamCommit": { "type": ["string", "null"] },
+				"upstreamRepository": { "type": ["string", "null"] }
+			},
+			"additionalProperties": true
+		},
+		"preset": {
+			"anyOf": [
+				{ "type": "null" },
+				{
+					"type": "object",
+					"required": ["id", "version"],
+					"properties": {
+						"id": { "type": "string" },
+						"version": { "type": "integer", "minimum": 1 }
+					},
+					"additionalProperties": false
+				}
+			]
+		},
+		"kokoro": { "type": ["object", "null"] },
+		"inputs": { "type": "array", "items": { "$ref": "#/$defs/hash" } },
+		"outputs": { "type": "array", "items": { "$ref": "#/$defs/hash" } },
+		"verification": { "type": ["object", "null"] },
+		"command": { "type": ["string", "null"] }
+	},
+	"$defs": {
+		"hash": {
+			"type": "object",
+			"required": ["path", "bytes", "sha256"],
+			"properties": {
+				"path": { "type": "string" },
+				"bytes": { "type": "integer", "minimum": 0 },
+				"sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+			},
+			"additionalProperties": true
+		}
+	}
+}

@@ -87,6 +87,7 @@
 		"diagnostic:smoke:win": "node scripts/diagnostic-tool/diagnostic.mjs --duration 3",
 		"build-vite": "tsc && vite build",
 		"cli": "electron .",
+		"mega-recorder": "node scripts/mega-recorder-cli.mjs",
 		"test:e2e": "playwright test",
 		"test:e2e:windows-native-checklist": "playwright test tests/e2e/windows-native-checklist.spec.ts",
 		"prepare": "husky",
@@ -171,6 +172,9 @@
 		"vitest": "^4.1.10"
 	},
 	"main": "dist-electron/main.js",
+	"bin": {
+		"mega-recorder": "scripts/mega-recorder-cli.mjs"
+	},
 	"lint-staged": {
 		"*.{ts,tsx,js,jsx,mts,cts,json}": "biome check --no-errors-on-unmatched"
 	}
