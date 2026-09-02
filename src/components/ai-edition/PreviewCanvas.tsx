@@ -114,6 +114,12 @@ const WEBCAM_SOURCE_SIZE = { width: 960, height: 720 };
 export function PreviewCanvas(props: PreviewCanvasProps) {
 	const te = useScopedT("editor");
 	const { settings, setLive, commit } = useEditorSettings();
+	// The hosted browser editor has no Electron compositor addon. Reuse the
+	// existing VirtualPreview as its honest, browser-native pixel path; the
+	// desktop app keeps the native compositor as the sole preview source.
+	const hostedBrowserEditor =
+		typeof window !== "undefined" &&
+		new URLSearchParams(window.location.search).has("megaRecorderToken");
 	// Captions are derived from the transcript, not passed down as regions — the
 	// preview reads them from the same façade the inspector writes to.
 	const document = useProjectStore((s) => s.document);
@@ -404,7 +410,7 @@ export function PreviewCanvas(props: PreviewCanvasProps) {
 			    interactive-only layers (ZoomFocusOverlay, AnnotationLayer, webcam drag
 			    hitbox) still render on top as normal DOM so they stay clickable. No more
 			    dual preview path. */}
-			<NativeCompositorOverlay />
+			{hostedBrowserEditor ? null : <NativeCompositorOverlay />}
 			{layout?.screenRect ? (
 				<div className={styles.screenStage} style={screenStyle}>
 					{(() => {
@@ -425,7 +431,10 @@ export function PreviewCanvas(props: PreviewCanvasProps) {
 						return (
 							<VirtualPreview
 								{...relayProps}
-								videoStyle={videoBorderRadiusStyle(layout, settings)}
+								videoStyle={{
+									...videoBorderRadiusStyle(layout, settings),
+									...(hostedBrowserEditor ? { visibility: "visible" } : {}),
+								}}
 							/>
 						);
 					})()}

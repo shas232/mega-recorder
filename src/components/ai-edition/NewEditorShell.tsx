@@ -90,6 +90,9 @@ function NativePlaybackSync({
 
 export function NewEditorShell() {
 	const te = useScopedT("editor");
+	const hostedBrowserEditor =
+		typeof window !== "undefined" &&
+		new URLSearchParams(window.location.search).has("megaRecorderToken");
 	const document = useProjectStore((s) => s.document);
 	const projectId = useProjectStore((s) => s.projectId);
 	const dirty = useProjectStore((s) => s.dirty);
@@ -1171,7 +1174,7 @@ export function NewEditorShell() {
 				onModeChange={setMode}
 				projectTitle={project?.title ?? null}
 				dirty={dirty}
-				canExport={hasAsset}
+				canExport={hasAsset && !hostedBrowserEditor}
 				chatOpen={chatOpen}
 				actions={{
 					openProject: () => setOpenProjectOpen(true),
@@ -1186,6 +1189,29 @@ export function NewEditorShell() {
 					checkForUpdates: handleCheckForUpdates,
 				}}
 			/>
+			{hostedBrowserEditor ? (
+				<div
+					role="status"
+					data-testid="browser-editor-limitations"
+					style={{
+						position: "absolute",
+						top: 62,
+						right: 12,
+						zIndex: 20,
+						maxWidth: 360,
+						padding: "6px 10px",
+						border: "1px solid var(--border)",
+						borderRadius: 6,
+						background: "var(--card)",
+						color: "var(--muted)",
+						fontSize: 11,
+						lineHeight: 1.35,
+					}}
+				>
+					Browser editor: timeline edits and inspection are available. Native compositor, camera
+					playback, AI providers, and export are desktop-only.
+				</div>
+			) : null}
 
 			<div className={v4.body} style={{ gridTemplateColumns: bodyColumns }}>
 				{mode === "edit" && chatOpen ? (

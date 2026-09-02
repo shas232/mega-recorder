@@ -11,11 +11,114 @@ function detectBrowserMode(): boolean {
 	if (typeof window === "undefined") return false;
 	if (window.electronAPI) return false; // Electron present, no shim needed
 	const params = new URLSearchParams(window.location.search);
-	return params.has("browser") || params.get("windowType") === "editor";
+	return (
+		params.has("browser") ||
+		params.get("windowType") === "editor" ||
+		params.has("megaRecorderToken")
+	);
 }
 
 function isBrowserMode(): boolean {
 	return detectBrowserMode();
+}
+
+interface BrowserEditorServerConfig {
+	baseUrl: string;
+	token: string;
+}
+
+function browserEditorServerConfig(): BrowserEditorServerConfig | null {
+	if (typeof window === "undefined") return null;
+	const token = new URLSearchParams(window.location.search).get("megaRecorderToken");
+	return token ? { baseUrl: window.location.origin, token } : null;
+}
+
+async function browserEditorRequest<TData>(
+	config: BrowserEditorServerConfig,
+	domain: string,
+	action: string,
+	payload?: unknown,
+): Promise<TData> {
+	const response = await fetch(`${config.baseUrl}/api/bridge`, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${config.token}`,
+		},
+		body: JSON.stringify({ domain, action, payload }),
+	});
+	const body = (await response.json()) as {
+		ok?: boolean;
+		data?: TData;
+		error?: { message?: string };
+	};
+	if (!response.ok || body.ok !== true) {
+		throw new Error(body.error?.message ?? `Browser editor request failed (${response.status})`);
+	}
+	return body.data as TData;
+}
+
+function browserDocumentWithMediaUrls(config: BrowserEditorServerConfig, value: unknown): unknown {
+	if (!value || typeof value !== "object") return value;
+	const document = JSON.parse(JSON.stringify(value)) as {
+		assets?: Array<{ id?: string; originalPath?: string }>;
+	};
+	if (!Array.isArray(document.assets)) return document;
+	for (const asset of document.assets) {
+		if (typeof asset.id === "string") {
+			asset.originalPath = `${config.baseUrl}/api/media/${encodeURIComponent(asset.id)}?token=${encodeURIComponent(config.token)}`;
+		}
+	}
+	return document;
+}
+
+function createBrowserEditorBridgeClient(config: BrowserEditorServerConfig) {
+	// Keep the existing renderer's chat/settings lifecycle alive in a hosted tab,
+	// while replacing only project persistence with the authenticated server API.
+	// This avoids creating a second editor implementation and keeps unsupported
+	// native/AI work in the existing browser-shim failure paths.
+	const localShim = createLocalShimBridgeClient();
+	const documentResult = async (action: string, payload?: unknown) =>
+		browserEditorRequest<{ success: boolean; document?: unknown }>(
+			config,
+			"aiEdition",
+			action,
+			payload,
+		);
+	return {
+		...localShim,
+		aiEdition: {
+			...localShim.aiEdition,
+			listProjects: () =>
+				browserEditorRequest<unknown[]>(config, "aiEdition", "document.listProjects"),
+			get: async (projectId: string) => {
+				const result = await documentResult("document.get", { projectId });
+				return result.document
+					? { ...result, document: browserDocumentWithMediaUrls(config, result.document) }
+					: result;
+			},
+			create: () => documentResult("document.create"),
+			save: async (document: unknown) => {
+				const result = await documentResult("document.save", { document });
+				return result.document
+					? { ...result, document: browserDocumentWithMediaUrls(config, result.document) }
+					: result;
+			},
+			delete: (projectId: string) => documentResult("document.delete", { projectId }),
+			addAsset: (projectId: string, assetPath: string, label?: string) =>
+				documentResult("document.addAsset", { projectId, path: assetPath, label }),
+			removeAsset: (projectId: string, assetId: string) =>
+				documentResult("document.removeAsset", { projectId, assetId }),
+		},
+		project: {
+			...localShim.project,
+			// The selected project is server-owned; do not expose a native current-path
+			// context to renderer code that only needs a safe browser fallback.
+			getCurrentContext: () =>
+				Promise.resolve({ currentProjectPath: null, currentVideoPath: null }),
+			loadProjectFile: () => Promise.resolve({ success: false, canceled: true }),
+		},
+	};
 }
 
 // ponytail: RecStage's source picker + recording-prefs need something to talk
@@ -167,7 +270,7 @@ function createShimElectronAPI() {
 	};
 }
 
-function createShimBridgeClient() {
+function createLocalShimBridgeClient() {
 	// ponytail: keyed by project id, matching the real DocumentService (one
 	// file per project on disk). The previous shim kept a single global
 	// `currentDoc` that `get(projectId)` ignored entirely — after a reload,
@@ -625,6 +728,12 @@ function createShimBridgeClient() {
 	};
 }
 
+function createShimBridgeClient(serverConfig: BrowserEditorServerConfig | null = null) {
+	return serverConfig
+		? createBrowserEditorBridgeClient(serverConfig)
+		: createLocalShimBridgeClient();
+}
+
 export function installBrowserShims(): void {
 	if (typeof window === "undefined") return;
 	if (!isBrowserMode()) return;
@@ -634,7 +743,7 @@ export function installBrowserShims(): void {
 	// ponytail: replace the nativeBridgeClient on the window object. Components
 	// import it from "@/native/client" at module load, so we patch the exported
 	// object's methods to return shim responses. This keeps the import unchanged.
-	const shim = createShimBridgeClient();
+	const shim = createShimBridgeClient(browserEditorServerConfig());
 	const realKeys = Object.keys(realClient) as Array<keyof typeof realClient>;
 	for (const domain of realKeys) {
 		const realDomain = realClient[domain];

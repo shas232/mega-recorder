@@ -47,3 +47,26 @@ failures, and `2` for invalid command arguments.
 The `record` and `export` commands are compatibility wrappers around the
 upstream OpenScreen CLI. Build the renderer first (`npm run build-vite`) and
 run `node scripts/mega-recorder-cli.mjs record ...` when using those commands.
+
+## Browser editor
+
+`mega-recorder edit <project>` starts a localhost-only server for the existing
+React editor shell and prints its URL as JSON. It binds `127.0.0.1` on an
+ephemeral port by default, authenticates API and media requests with a random
+per-process token, and writes only the selected project file. Referenced media
+is served by asset id; arbitrary filesystem paths are never accepted.
+
+```bash
+npm run build-vite
+npm run --silent mega-recorder -- edit ./demo.openscreen
+```
+
+The browser milestone supports inspection and existing timeline cut/trim
+editing. Native capture, native compositor preview, camera playback, AI
+provider calls, and export remain desktop-only and are explicitly unsupported
+in this adapter.
+
+For non-interactive agent use, `edit delete <project> --start <seconds>
+--end <seconds>` performs a media-preserving ripple delete and writes a sibling
+`.edited.openscreen` by default. Add `--in-place` to update the selected project
+file explicitly.

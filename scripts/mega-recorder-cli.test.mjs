@@ -204,4 +204,79 @@ describe("MEGA RECORDER product layer", () => {
 		});
 		expect(await fs.readFile(projectPath, "utf8")).toBe(original);
 	});
+
+	it("starts the browser editor on loopback and exposes a non-interactive delete operation", async () => {
+		const directory = await fs.mkdtemp(path.join(os.tmpdir(), "mega-recorder-edit-"));
+		const projectPath = path.join(directory, "demo.openscreen");
+		const project = {
+			schemaVersion: 7,
+			project: { id: "proj_cli", title: "CLI project", primaryAssetId: "asset_1" },
+			assets: [
+				{
+					id: "asset_1",
+					kind: "video",
+					label: "Capture",
+					originalPath: "/tmp/capture.mp4",
+					durationSec: 20,
+				},
+			],
+			timeline: {
+				clips: [
+					{
+						id: "clip_1",
+						assetId: "asset_1",
+						sourceStartSec: 0,
+						sourceEndSec: 20,
+						timelineStartSec: 0,
+						timelineEndSec: 20,
+						wordRefs: [],
+						origin: "system",
+						reason: "",
+					},
+				],
+				gaps: [],
+				trimRanges: [],
+				muteRanges: [],
+				speedRanges: [],
+				captionRanges: [],
+			},
+			annotations: [],
+			zoomRanges: [],
+			legacyEditor: null,
+		};
+		await fs.writeFile(projectPath, JSON.stringify(project), "utf8");
+		const started = await runCommand(["edit", projectPath]);
+		expect(started).toMatchObject({
+			ok: true,
+			command: "edit",
+			host: "127.0.0.1",
+			projectId: "proj_cli",
+		});
+		expect(started.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//);
+		await started.server.close();
+
+		const edited = await runCommand([
+			"edit",
+			"delete",
+			projectPath,
+			"--start",
+			"5",
+			"--end",
+			"8",
+			"--in-place",
+		]);
+		expect(edited).toMatchObject({
+			ok: true,
+			operation: "ripple-delete",
+			changed: true,
+			mediaTouched: false,
+			outputPath: projectPath,
+		});
+		const saved = JSON.parse(await fs.readFile(projectPath, "utf8"));
+		expect(saved.timeline.clips.map((clip) => [clip.sourceStartSec, clip.sourceEndSec])).toEqual([
+			[0, 5],
+			[8, 20],
+		]);
+		await fs.rm(directory, { recursive: true, force: true });
+	});
 });

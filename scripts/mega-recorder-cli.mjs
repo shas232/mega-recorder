@@ -6,6 +6,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createBrowserEditorServer } from "./mega-recorder/browser-editor-server.mjs";
 import {
 	KOKORO_MODEL_ID,
 	KOKORO_SAMPLE_RATE,
@@ -20,6 +21,7 @@ import {
 	updateManifest,
 } from "./mega-recorder/manifest.mjs";
 import { applyPresetToProject, getPreset, listPresets } from "./mega-recorder/preset.mjs";
+import { deleteRangeFromDocument, writeDocumentAtomically } from "./mega-recorder/timeline.mjs";
 import { probeMedia, verifyMedia } from "./mega-recorder/verify.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -38,6 +40,8 @@ const USAGE = [
 	"  mega-recorder kokoro doctor",
 	"  mega-recorder kokoro synthesize (--text <text> | --text-file <file>) [options]",
 	"  mega-recorder verify <media> [options]",
+	"  mega-recorder edit <project> [--port <port>]  (browser editor; localhost only)",
+	"  mega-recorder edit delete <project> --start <seconds> --end <seconds> [--output <file> | --in-place]",
 	"  mega-recorder record|export <upstream options>  (delegates to OpenScreen)",
 	"",
 	"Every command writes one stable JSON object to stdout. Diagnostics belong on stderr.",
@@ -533,6 +537,141 @@ async function verifyCommand(tokens) {
 	};
 }
 
+function editOutputPath(projectPath, parsed) {
+	const requested = optionValue(parsed, "--output", "--out", "-o");
+	const inPlace = parsed.flags.has("--in-place");
+	if (inPlace && requested !== undefined) {
+		throw Object.assign(new Error("Use either --in-place or --output, not both"), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	}
+	const outputPath = inPlace
+		? projectPath
+		: expandPath(
+				requested ??
+					`${projectPath.replace(/\.(openscreen|axcut)$/i, "")}.edited${path.extname(projectPath)}`,
+			);
+	if (!inPlace) assertDistinctPath(outputPath, [projectPath], "Edit output");
+	return outputPath;
+}
+
+async function editDeleteCommand(tokens) {
+	const parsed = parseTokens(tokens);
+	validateParsedOptions(
+		parsed,
+		new Set(["--start", "--end", "--output", "--out", "-o", "--in-place"]),
+		"edit delete",
+	);
+	validateRequiredValueOptions(
+		parsed,
+		["--start", "--end", "--output", "--out", "-o"],
+		"edit delete",
+	);
+	validatePositionalCount(parsed, 1, "edit delete");
+	const projectValue = parsed.positional[0];
+	if (!projectValue)
+		throw Object.assign(new Error("edit delete requires a project path"), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	const projectPath = expandPath(projectValue);
+	const startSec = numberValue(parsed, ["--start"], "--start", { min: 0 });
+	const endSec = numberValue(parsed, ["--end"], "--end", { min: 0 });
+	if (startSec === undefined || endSec === undefined || endSec <= startSec) {
+		throw Object.assign(new Error("edit delete requires --end greater than --start"), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	}
+	const source = await readJson(projectPath);
+	const edited = deleteRangeFromDocument(source, startSec, endSec);
+	const outputPath = editOutputPath(projectPath, parsed);
+	await fs.mkdir(path.dirname(outputPath), { recursive: true });
+	if (edited.changed) await writeDocumentAtomically(outputPath, edited.document);
+	else if (outputPath !== projectPath) await fs.copyFile(projectPath, outputPath);
+	return result("edit delete", {
+		operation: "ripple-delete",
+		projectPath,
+		outputPath,
+		startSec,
+		endSec,
+		changed: edited.changed,
+		mediaTouched: false,
+	});
+}
+
+async function editCommand(tokens) {
+	if (tokens[0] === "delete") return editDeleteCommand(tokens.slice(1));
+	const parsed = parseTokens(tokens);
+	validateParsedOptions(
+		parsed,
+		new Set([
+			"--port",
+			"--project",
+			"-p",
+			"--delete",
+			"--start",
+			"--end",
+			"--output",
+			"--out",
+			"-o",
+			"--in-place",
+		]),
+		"edit",
+	);
+	validateRequiredValueOptions(
+		parsed,
+		["--port", "--project", "-p", "--start", "--end", "--output", "--out", "-o"],
+		"edit",
+	);
+	validatePositionalCount(parsed, 1, "edit");
+	// `edit <project> --delete --start ... --end ...` is a convenient alias for
+	// the explicit `edit delete <project>` form, but still requires the flag so
+	// starting a browser server remains the default.
+	if (parsed.flags.has("--delete")) {
+		const project = optionValue(parsed, "--project", "-p") ?? parsed.positional[0];
+		const start = optionValue(parsed, "--start");
+		const end = optionValue(parsed, "--end");
+		if (!project || start === undefined || end === undefined) {
+			throw Object.assign(
+				new Error("edit --delete requires a project, --start, and --end"),
+				{ code: "CLI_ARGUMENT_ERROR" },
+			);
+		}
+		const editTokens = [
+			project,
+			"--start",
+			start,
+			"--end",
+			end,
+		];
+		const requestedOutput = optionValue(parsed, "--output", "--out", "-o");
+		if (requestedOutput !== undefined) editTokens.push("--output", requestedOutput);
+		if (parsed.flags.has("--in-place")) editTokens.push("--in-place");
+		return editDeleteCommand(editTokens);
+	}
+	const projectValue = optionValue(parsed, "--project", "-p") ?? parsed.positional[0];
+	if (!projectValue)
+		throw Object.assign(new Error("edit requires a project path"), { code: "CLI_ARGUMENT_ERROR" });
+	const port = numberValue(parsed, ["--port"], "--port", { integer: true, min: 0 }) ?? 0;
+	const editor = await createBrowserEditorServer({ projectPath: expandPath(projectValue), port });
+	return {
+		...result("edit"),
+		projectPath: editor.projectPath,
+		projectId: editor.projectId,
+		host: editor.host,
+		port: editor.port,
+		url: editor.url,
+		localOnly: true,
+		capabilities: {
+			inspection: true,
+			save: true,
+			rippleDelete: true,
+			nativeCapture: false,
+			export: false,
+		},
+		server: editor,
+	};
+}
+
 function upstreamExecutable() {
 	if (process.env.MEGA_RECORDER_ELECTRON) return process.env.MEGA_RECORDER_ELECTRON;
 	return path.join(
@@ -639,6 +778,7 @@ export async function runCommand(argv) {
 			});
 		}
 		if (root === "verify") return await verifyCommand(tokens);
+		if (root === "edit") return await editCommand(tokens);
 		if (root === "record" || root === "export") return await delegateUpstream(root, tokens);
 		throw Object.assign(new Error(`Unknown command: ${root}`), { code: "CLI_ARGUMENT_ERROR" });
 	} catch (error) {
@@ -665,7 +805,17 @@ try {
 }
 if (invokedRealPath === SCRIPT_PATH) {
 	const output = await runCommand(process.argv.slice(2));
-	printJson(output);
+	const { server, ...stableOutput } = output;
+	printJson(stableOutput);
 	const argumentErrors = new Set(["CLI_ARGUMENT_ERROR", "PRESET_NOT_FOUND"]);
 	process.exitCode = output.ok ? 0 : output.error && argumentErrors.has(output.error.code) ? 2 : 1;
+	if (server && output.ok) {
+		const close = async () => {
+			await server.close().catch(() => undefined);
+			process.exit(0);
+		};
+		process.once("SIGINT", close);
+		process.once("SIGTERM", close);
+		await new Promise(() => undefined);
+	}
 }
