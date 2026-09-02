@@ -65,6 +65,7 @@ const BLUE_STUDIO = Object.freeze({
 			exportFormat: "mp4",
 			exportQuality: "good",
 			autoZoomEnabled: true,
+			autoFocusAll: true,
 			cursorTheme: "default",
 			// These extension keys are preserved by normalizeProjectEditor and
 			// arrive in Axcut's legacyEditor envelope for the native compositor.

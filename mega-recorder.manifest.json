@@ -12,6 +12,16 @@
 		"license": "MIT",
 		"attributionFiles": ["LICENSE", "THIRD-PARTY-NOTICES.md"]
 	},
+	"preset": { "id": "blue-studio", "version": 1 },
+	"kokoro": {
+		"runtime": "local-python",
+		"model": "hexgrad/Kokoro-82M",
+		"sampleRate": 24000
+	},
+	"inputs": [],
+	"outputs": [],
+	"verification": null,
+	"command": null,
 	"productLayer": {
 		"cli": "scripts/mega-recorder-cli.mjs",
 		"preset": { "id": "blue-studio", "version": 1 },

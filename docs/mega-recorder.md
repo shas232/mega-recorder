@@ -14,7 +14,9 @@ npm run --silent mega-recorder -- verify demo.mp4 --preset blue-studio --manifes
 The `blue-studio` preset targets a 1920×1080, 60 fps output, a blurred blue
 gradient, a centered padded card with shadow and rounded corners, visible
 cursor telemetry (default theme, scale 3, click pulse 2.5), and restrained
-cursor-focused zoom defaults. Its `upstream.editor` mapping uses the existing
+cursor-focused zoom defaults. Applying it enables global cursor-follow focus for
+all zooms and keeps cursor-dwell auto-zoom suggestions enabled. Its
+`upstream.editor` mapping uses the existing
 `.openscreen` editor schema; optional cursor extension keys are carried into
 the native compositor's existing `legacyEditor` bridge.
 

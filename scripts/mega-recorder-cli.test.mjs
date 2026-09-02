@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import Ajv from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import {
 	buildManifest,
@@ -48,8 +49,27 @@ describe("MEGA RECORDER product layer", () => {
 			showBlur: true,
 			cursorSize: 3,
 			cursorClickBounce: 2.5,
+			autoZoomEnabled: true,
+			autoFocusAll: true,
 		});
 		expect(source.editor.padding).toBe(2);
+	});
+
+	it("keeps the checked-in baseline valid against the project manifest schema", async () => {
+		const schema = JSON.parse(
+			await fs.readFile(
+				path.join(import.meta.dirname, "..", "schemas/mega-recorder-project-manifest.schema.json"),
+				"utf8",
+			),
+		);
+		const baseline = JSON.parse(
+			await fs.readFile(
+				path.join(import.meta.dirname, "..", "mega-recorder.manifest.json"),
+				"utf8",
+			),
+		);
+		const validate = new Ajv({ strict: true }).compile(schema);
+		expect(validate(baseline), JSON.stringify(validate.errors)).toBe(true);
 	});
 
 	it("maps ffprobe rational rates and verifies all media dimensions", () => {
