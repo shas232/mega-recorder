@@ -1,0 +1,34 @@
+{
+	"project": {
+		"name": "MEGA RECORDER",
+		"kind": "team-fork-baseline",
+		"upstreamRepository": "https://github.com/getopenscreen/openscreen",
+		"upstreamRef": "origin/main",
+		"upstreamCommit": "cc7d514a93c828f52b5cf28a1aaf091c399f2bd1",
+		"upstreamDescribe": "v1.9.2-507-gcc7d514a",
+		"upstreamPackageVersion": "1.10.0",
+		"license": "MIT",
+		"attributionFiles": ["LICENSE", "THIRD-PARTY-NOTICES.md"]
+	},
+	"source": {
+		"selectedFrom": "https://github.com/getopenscreen/openscreen.git",
+		"selectedAt": "2026-09-01",
+		"branch": "feature/bootstrap-mega-recorder"
+	},
+	"hostBaseline": {
+		"platform": "darwin-arm64",
+		"os": "macOS 15.6.1",
+		"nodeObserved": "22.22.3",
+		"npmObserved": "10.9.8",
+		"nodeRequired": "22.22.1",
+		"npmRequired": "10.9.4",
+		"lockfile": "package-lock.json"
+	},
+	"extensionPoints": [
+		"src/",
+		"electron/",
+		"electron/native/screencapturekit/",
+		"crates/",
+		"scripts/"
+	]
+}
