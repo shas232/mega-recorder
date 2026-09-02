@@ -29,6 +29,8 @@ so this layer does not reimplement or fake native capture. Local Kokoro runs in
 it accepts text through stdin and writes 24 kHz mono PCM WAV. If the Python
 package/model cache is not already installed, `kokoro doctor` reports `ready: false`
 and synthesis exits with a structured error rather than downloading anything.
+The top-level `doctor` command reports `ready: true` only when both ffprobe and
+the local Kokoro runtime/model are ready.
 
 `preset apply` writes a new `.openscreen` file by default and preserves the
 source. Use `--in-place` only when that mutation is intended. `--manifest path`

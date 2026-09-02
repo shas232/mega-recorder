@@ -7,7 +7,7 @@ agents and CI to consume without scraping human progress output.
 npm run --silent mega-recorder -- doctor
 npm run --silent mega-recorder -- preset show blue-studio
 npm run --silent mega-recorder -- preset apply blue-studio --project demo.openscreen
-npm run --silent mega-recorder -- kokoro synthesize --text "Welcome" --voice af_heart --output narration.wav
+npm run --silent mega-recorder -- kokoro synthesize --text "Welcome" --voice am_michael --output narration.wav
 npm run --silent mega-recorder -- verify demo.mp4 --preset blue-studio --manifest demo.mega.json
 ```
 
@@ -22,7 +22,10 @@ the native compositor's existing `legacyEditor` bridge.
 
 `kokoro doctor` searches an explicit `MEGA_RECORDER_KOKORO_PYTHON`, the active
 virtual environment, a conventional `~/.venvs/kokoro`, and `python3` on PATH.
-It reuses an existing `hexgrad/Kokoro-82M` cache. Synthesis fails if either the
+It reuses an existing `hexgrad/Kokoro-82M` cache. `kokoro doctor` reports the
+cached voice ids; when `--voice` is omitted, synthesis prefers `af_heart`, then
+the cached `am_michael` voice, then the first cached voice. An explicitly
+requested voice must be present in the cache. Synthesis fails if either the
 runtime or model cache is missing. The adapter sets `HF_HUB_OFFLINE=1`,
 `TRANSFORMERS_OFFLINE=1`, and `HF_DATASETS_OFFLINE=1`; narration text is sent
 to the local helper over stdin and is never uploaded.

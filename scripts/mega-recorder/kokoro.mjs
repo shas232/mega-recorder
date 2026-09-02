@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 
 const MODEL_ID = "hexgrad/Kokoro-82M";
 const SAMPLE_RATE = 24000;
+const PREFERRED_DEFAULT_VOICE = "af_heart";
+const FALLBACK_DEFAULT_VOICE = "am_michael";
 const RUNTIME_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "kokoro_runtime.py");
 
 function expandHome(value) {
@@ -17,7 +19,7 @@ function unique(values) {
 }
 
 export function modelCacheCandidates(env = process.env) {
-	const cacheRoot = env.HUGGINGFACE_HUB_CACHE || env.HF_HOME;
+	const cacheRoot = env.HF_HUB_CACHE || env.HUGGINGFACE_HUB_CACHE || env.HF_HOME;
 	return unique([
 		env.MEGA_RECORDER_KOKORO_MODEL_CACHE,
 		cacheRoot && path.basename(cacheRoot) === "hub"
@@ -37,13 +39,28 @@ export async function findModelCache(env = process.env) {
 				/\.(pth|safetensors|bin)$/i.test(path.basename(entry)),
 			);
 			if (hasConfig || hasWeights) {
-				return { path: candidate, hasConfig, hasWeights };
+				const voices = [
+					...new Set(
+						entries
+							.filter((entry) => /(?:^|[/\\])voices[/\\][^/\\]+\.pt$/i.test(entry))
+							.map((entry) => path.basename(entry, path.extname(entry))),
+					),
+				].sort();
+				return { path: candidate, hasConfig, hasWeights, voices };
 			}
 		} catch {
 			// A missing cache is expected on a first install.
 		}
 	}
 	return null;
+}
+
+export async function resolveDefaultVoice(env = process.env) {
+	const cache = await findModelCache(env);
+	const voices = cache?.voices ?? [];
+	if (voices.includes(PREFERRED_DEFAULT_VOICE)) return PREFERRED_DEFAULT_VOICE;
+	if (voices.includes(FALLBACK_DEFAULT_VOICE)) return FALLBACK_DEFAULT_VOICE;
+	return voices[0] ?? PREFERRED_DEFAULT_VOICE;
 }
 
 function pythonCandidates(env = process.env) {
@@ -69,17 +86,31 @@ function pythonCandidates(env = process.env) {
 	];
 }
 
-async function runPython(python, args, input = "", environment = process.env) {
+export function buildRuntimeEnvironment(environment = process.env, modelCache = null) {
+	const runtime = { ...environment };
+	if (modelCache?.path) {
+		// MEGA_RECORDER_KOKORO_MODEL_CACHE points at the Hugging Face model
+		// directory, while the library expects its parent `hub` directory.
+		// Keep the explicit cache selection and the offline contract aligned.
+		const hubCache = path.dirname(modelCache.path);
+		runtime.HF_HUB_CACHE = hubCache;
+		runtime.HUGGINGFACE_HUB_CACHE = hubCache;
+	}
+	return {
+		...runtime,
+		HF_HUB_OFFLINE: "1",
+		TRANSFORMERS_OFFLINE: "1",
+		HF_DATASETS_OFFLINE: "1",
+		HF_HUB_DISABLE_TELEMETRY: "1",
+		MEGA_RECORDER_NO_NETWORK: "1",
+	};
+}
+
+async function runPython(python, args, input = "", environment = process.env, modelCache = null) {
 	return new Promise((resolve) => {
 		const child = spawn(python, [RUNTIME_SCRIPT, ...args], {
 			cwd: path.dirname(RUNTIME_SCRIPT),
-			env: {
-				...environment,
-				HF_HUB_OFFLINE: "1",
-				TRANSFORMERS_OFFLINE: "1",
-				HF_DATASETS_OFFLINE: "1",
-				MEGA_RECORDER_NO_NETWORK: "1",
-			},
+			env: buildRuntimeEnvironment(environment, modelCache),
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		let stdout = "";
@@ -113,21 +144,27 @@ export async function kokoroDoctor(env = process.env) {
 	const cache = await findModelCache(env);
 	const attempts = [];
 	for (const python of pythonCandidates(env)) {
-		const result = await runPython(python, ["--doctor"], "", env);
+		const result = await runPython(python, ["--doctor"], "", env, cache);
 		const parsed = parseRuntimeOutput(result);
+		const dependenciesAvailable =
+			parsed?.dependencies &&
+			Object.keys(parsed.dependencies).length > 0 &&
+			Object.values(parsed.dependencies).every((available) => available === true);
 		attempts.push({
 			python,
 			available: result.code === 0 && parsed?.moduleAvailable === true,
 			moduleAvailable: parsed?.moduleAvailable ?? false,
+			dependenciesAvailable: Boolean(dependenciesAvailable),
 			version: parsed?.version ?? null,
 			dependencies: parsed?.dependencies ?? {},
-			error: result.error?.message ?? null,
+			error: parsed?.error ?? result.error?.message ?? (result.stderr.trim() || null),
 		});
-		if (result.code === 0 && parsed?.moduleAvailable === true) {
+		if (result.code === 0 && parsed?.moduleAvailable === true && dependenciesAvailable) {
 			return {
-				ready: Boolean(cache?.hasConfig && cache?.hasWeights),
+				ready: Boolean(cache?.hasConfig && cache?.hasWeights && cache.voices?.length),
 				model: MODEL_ID,
 				sampleRate: SAMPLE_RATE,
+				defaultVoice: await resolveDefaultVoice(env),
 				modelCache: cache,
 				runtime: attempts.at(-1),
 				network: "disabled",
@@ -139,6 +176,7 @@ export async function kokoroDoctor(env = process.env) {
 		ready: false,
 		model: MODEL_ID,
 		sampleRate: SAMPLE_RATE,
+		defaultVoice: await resolveDefaultVoice(env),
 		modelCache: cache,
 		runtime: null,
 		network: "disabled",
@@ -148,12 +186,21 @@ export async function kokoroDoctor(env = process.env) {
 
 export async function synthesizeWithKokoro({ text, voice, outputPath, env = process.env }) {
 	const cache = await findModelCache(env);
-	if (!cache?.hasConfig || !cache?.hasWeights) {
+	if (!cache?.hasConfig || !cache?.hasWeights || !cache.voices?.length) {
 		const error = new Error(`Kokoro model cache is unavailable for ${MODEL_ID}`);
 		error.code = "KOKORO_MODEL_UNAVAILABLE";
 		throw error;
 	}
+	if (!cache.voices.includes(voice)) {
+		const error = new Error(
+			`Kokoro voice is unavailable in the local cache: ${voice} (available: ${cache.voices.join(", ")})`,
+		);
+		error.code = "KOKORO_VOICE_UNAVAILABLE";
+		error.availableVoices = cache.voices;
+		throw error;
+	}
 	let lastFailure = null;
+	const failures = [];
 	for (const python of pythonCandidates(env)) {
 		const result = await runPython(
 			python,
@@ -168,6 +215,7 @@ export async function synthesizeWithKokoro({ text, voice, outputPath, env = proc
 			],
 			text,
 			env,
+			cache,
 		);
 		const parsed = parseRuntimeOutput(result);
 		if (result.code === 0 && parsed?.ok === true) {
@@ -178,8 +226,14 @@ export async function synthesizeWithKokoro({ text, voice, outputPath, env = proc
 			failureMessage || `Kokoro runtime exited with code ${result.code ?? "unknown"}`,
 		);
 		lastFailure.code = parsed?.code ?? "KOKORO_RUNTIME_FAILED";
+		failures.push({ python, code: lastFailure.code, message: lastFailure.message });
 	}
-	throw lastFailure ?? new Error("No compatible local Kokoro runtime found");
+	if (!lastFailure) throw new Error("No compatible local Kokoro runtime found");
+	lastFailure.message = `No compatible local Kokoro runtime succeeded: ${failures
+		.map((failure) => `${failure.python}: ${failure.message}`)
+		.join("; ")}`;
+	lastFailure.attempts = failures;
+	throw lastFailure;
 }
 
 export const KOKORO_MODEL_ID = MODEL_ID;

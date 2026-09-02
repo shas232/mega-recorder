@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	buildManifest,
@@ -25,6 +28,10 @@ describe("MEGA RECORDER product layer", () => {
 			borderRadius: 32,
 		});
 		expect(response.preset.cursor).toMatchObject({ visible: true, size: 3, clickBounce: 2.5 });
+		expect(response.preset.upstream.editor).toMatchObject({
+			exportFormat: "mp4",
+			exportQuality: "good",
+		});
 	});
 
 	it("preserves unrelated project fields while applying upstream editor settings", () => {
@@ -109,5 +116,72 @@ describe("MEGA RECORDER product layer", () => {
 			command: "not-a-command",
 			error: { code: "CLI_ARGUMENT_ERROR" },
 		});
+	});
+
+	it("reports overall readiness only when required local checks are ready", async () => {
+		const response = await runCommand(["doctor"]);
+		expect(response.ready).toBe(response.checks.ffprobe.available && response.checks.kokoro.ready);
+	});
+
+	it("rejects inherited presets, unknown options, and extra positional arguments", async () => {
+		expect(await runCommand(["preset", "show", "__proto__"])).toMatchObject({
+			ok: false,
+			error: { code: "PRESET_NOT_FOUND" },
+		});
+		expect(await runCommand(["preset", "show", "blue-studio", "extra"])).toMatchObject({
+			ok: false,
+			error: { code: "CLI_ARGUMENT_ERROR" },
+		});
+		expect(await runCommand(["kokoro", "synthesize", "--text", "hello", "--bogus"])).toMatchObject({
+			ok: false,
+			error: { code: "CLI_ARGUMENT_ERROR" },
+		});
+		expect(await runCommand(["doctor", "--bogus"])).toMatchObject({
+			ok: false,
+			error: { code: "CLI_ARGUMENT_ERROR" },
+		});
+		expect(await runCommand(["kokoro", "doctor", "extra"])).toMatchObject({
+			ok: false,
+			error: { code: "CLI_ARGUMENT_ERROR" },
+		});
+		expect(await runCommand(["kokoro", "synthesize", "--text"])).toMatchObject({
+			ok: false,
+			error: { code: "CLI_ARGUMENT_ERROR" },
+		});
+		expect(await runCommand(["verify", "/tmp/demo.mp4", "--width"])).toMatchObject({
+			ok: false,
+			error: { code: "CLI_ARGUMENT_ERROR" },
+		});
+		expect(await runCommand(["verify", "/tmp/demo.mp4", "--width="])).toMatchObject({
+			ok: false,
+			error: { code: "CLI_ARGUMENT_ERROR" },
+		});
+	});
+
+	it("does not let a manifest path overwrite the project it describes", async () => {
+		const directory = await fs.mkdtemp(path.join(os.tmpdir(), "mega-recorder-cli-"));
+		const projectPath = path.join(directory, "demo.openscreen");
+		const original = JSON.stringify({
+			version: 2,
+			media: { screenVideoPath: "/tmp/demo.mp4" },
+			editor: {},
+		});
+		await fs.writeFile(projectPath, original, "utf8");
+
+		const response = await runCommand([
+			"preset",
+			"apply",
+			"blue-studio",
+			"--project",
+			projectPath,
+			"--in-place",
+			"--manifest",
+			projectPath,
+		]);
+		expect(response).toMatchObject({
+			ok: false,
+			error: { code: "CLI_ARGUMENT_ERROR" },
+		});
+		expect(await fs.readFile(projectPath, "utf8")).toBe(original);
 	});
 });

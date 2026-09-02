@@ -3,12 +3,14 @@
 import { spawn, spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	KOKORO_MODEL_ID,
 	KOKORO_SAMPLE_RATE,
 	kokoroDoctor,
+	resolveDefaultVoice,
 	synthesizeWithKokoro,
 } from "./mega-recorder/kokoro.mjs";
 import {
@@ -59,9 +61,7 @@ function printJson(value) {
 }
 
 function expandPath(value) {
-	return path.resolve(
-		value.startsWith("~/") ? path.join(process.env.HOME ?? "", value.slice(2)) : value,
-	);
+	return path.resolve(value.startsWith("~/") ? path.join(os.homedir(), value.slice(2)) : value);
 }
 
 function parseTokens(tokens) {
@@ -107,11 +107,58 @@ function requiredValue(parsed, names, label) {
 	return value;
 }
 
+function validateParsedOptions(parsed, allowed, command) {
+	const unknown = [...parsed.values.keys(), ...parsed.flags].find((name) => !allowed.has(name));
+	if (unknown) {
+		throw Object.assign(new Error(`Unknown ${command} option: ${unknown}`), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	}
+}
+
+function validateRequiredValueOptions(parsed, names, command) {
+	const missing = names.find((name) => parsed.flags.has(name));
+	if (missing) {
+		throw Object.assign(new Error(`${missing} requires a value for ${command}`), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	}
+}
+
+function validatePositionalCount(parsed, maximum, command) {
+	if (parsed.positional.length > maximum) {
+		throw Object.assign(new Error(`Unexpected extra argument: ${parsed.positional[maximum]}`), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	}
+}
+
+function canonicalPath(value) {
+	const resolved = path.resolve(value);
+	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function assertDistinctPath(candidate, protectedPaths, label) {
+	const candidatePath = canonicalPath(candidate);
+	for (const protectedPath of protectedPaths) {
+		if (candidatePath === canonicalPath(protectedPath)) {
+			throw Object.assign(new Error(`${label} must not overwrite ${protectedPath}`), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		}
+	}
+}
+
 function numberValue(parsed, names, label, { integer = false, min = 0 } = {}) {
 	const raw = optionValue(parsed, ...names);
 	if (raw === undefined) return undefined;
 	const value = Number(raw);
-	if (!Number.isFinite(value) || value < min || (integer && !Number.isInteger(value))) {
+	if (
+		raw.trim() === "" ||
+		!Number.isFinite(value) ||
+		value < min ||
+		(integer && !Number.isInteger(value))
+	) {
 		throw Object.assign(new Error(`${label} must be a valid number`), {
 			code: "CLI_ARGUMENT_ERROR",
 		});
@@ -182,14 +229,19 @@ export async function runDoctor() {
 		},
 		checks: {
 			ffprobe,
-			kokoro: { ready: kokoro.ready, model: kokoro.model, modelCache: kokoro.modelCache },
+			kokoro: {
+				ready: kokoro.ready,
+				model: kokoro.model,
+				defaultVoice: kokoro.defaultVoice,
+				modelCache: kokoro.modelCache,
+			},
 			nativeCapture: {
 				status: "delegated",
 				helperArtifactsPresent: nativeHelpersPresent,
 				note: "Recording uses the upstream Electron/native pipeline; this command does not fake capture.",
 			},
 		},
-		ready: ffprobe.available,
+		ready: ffprobe.available && kokoro.ready,
 		localOnly: true,
 	});
 }
@@ -205,6 +257,17 @@ export function showPreset(name = "blue-studio") {
 
 async function applyPreset(tokens) {
 	const parsed = parseTokens(tokens);
+	validateParsedOptions(
+		parsed,
+		new Set(["--project", "-p", "--output", "--out", "-o", "--in-place", "--manifest"]),
+		"preset apply",
+	);
+	validateRequiredValueOptions(
+		parsed,
+		["--project", "-p", "--output", "--out", "-o", "--manifest"],
+		"preset apply",
+	);
+	validatePositionalCount(parsed, 1, "preset apply");
 	const name = parsed.positional[0] ?? "blue-studio";
 	const preset = getPreset(name);
 	if (!preset) return failure("preset apply", "PRESET_NOT_FOUND", `Unknown preset: ${name}`);
@@ -214,11 +277,22 @@ async function applyPreset(tokens) {
 	const inputHashes = await hashFiles([projectPath]);
 	const requestedOutput = optionValue(parsed, "--output", "--out", "-o");
 	const inPlace = parsed.flags.has("--in-place");
+	if (inPlace && requestedOutput !== undefined) {
+		throw Object.assign(new Error("Use either --in-place or --output, not both"), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	}
 	const outputPath = inPlace
 		? projectPath
 		: expandPath(
 				requestedOutput ?? `${projectPath.replace(/\.openscreen$/i, "")}.${preset.id}.openscreen`,
 			);
+	if (!inPlace) assertDistinctPath(outputPath, [projectPath], "Preset output");
+	const manifestPath = optionValue(parsed, "--manifest");
+	const absoluteManifestPath = manifestPath ? expandPath(manifestPath) : null;
+	if (absoluteManifestPath) {
+		assertDistinctPath(absoluteManifestPath, [outputPath, projectPath], "Manifest path");
+	}
 	await fs.mkdir(path.dirname(outputPath), { recursive: true });
 	const temporary = `${outputPath}.${process.pid}.tmp`;
 	try {
@@ -232,11 +306,10 @@ async function applyPreset(tokens) {
 		});
 	}
 	const [outputs, baseline] = await Promise.all([hashFiles([outputPath]), readBaseline()]);
-	const manifestPath = optionValue(parsed, "--manifest");
 	let manifest = null;
-	if (manifestPath) {
+	if (absoluteManifestPath) {
 		manifest = await updateManifest(
-			expandPath(manifestPath),
+			absoluteManifestPath,
 			buildManifest({ baseline, preset, inputs: inputHashes, outputs, command: "preset apply" }),
 		);
 	}
@@ -252,6 +325,7 @@ async function runKokoroDoctor() {
 	return result("kokoro doctor", {
 		ready: details.ready,
 		model: details.model,
+		defaultVoice: details.defaultVoice,
 		modelCache: details.modelCache,
 		runtime: details.runtime,
 		attempts: details.attempts,
@@ -263,6 +337,26 @@ async function runKokoroDoctor() {
 
 async function synthesize(tokens) {
 	const parsed = parseTokens(tokens);
+	validateParsedOptions(
+		parsed,
+		new Set([
+			"--text",
+			"--text-file",
+			"--file",
+			"--voice",
+			"--output",
+			"--out",
+			"-o",
+			"--manifest",
+		]),
+		"kokoro synthesize",
+	);
+	validateRequiredValueOptions(
+		parsed,
+		["--text", "--text-file", "--file", "--voice", "--output", "--out", "-o", "--manifest"],
+		"kokoro synthesize",
+	);
+	validatePositionalCount(parsed, 0, "kokoro synthesize");
 	const text = optionValue(parsed, "--text");
 	const textFile = optionValue(parsed, "--text-file", "--file");
 	if (text !== undefined && textFile !== undefined) {
@@ -279,8 +373,11 @@ async function synthesize(tokens) {
 	if (!narration.trim()) {
 		throw Object.assign(new Error("Narration text is empty"), { code: "NARRATION_EMPTY" });
 	}
-	const voice = optionValue(parsed, "--voice") ?? "af_heart";
+	const voice = optionValue(parsed, "--voice") ?? (await resolveDefaultVoice());
 	const outputPath = expandPath(optionValue(parsed, "--output", "--out", "-o") ?? "narration.wav");
+	const manifestPath = optionValue(parsed, "--manifest");
+	const absoluteManifestPath = manifestPath ? expandPath(manifestPath) : null;
+	if (absoluteManifestPath) assertDistinctPath(absoluteManifestPath, [outputPath], "Manifest path");
 	await synthesizeWithKokoro({ text: narration, voice, outputPath });
 	const probed = await probeMedia(outputPath);
 	const observedSampleRate = probed.metadata.audio?.sampleRate ?? null;
@@ -301,11 +398,10 @@ async function synthesize(tokens) {
 		hashFiles([outputPath]),
 		readBaseline(),
 	]);
-	const manifestPath = optionValue(parsed, "--manifest");
 	let manifest = null;
-	if (manifestPath) {
+	if (absoluteManifestPath) {
 		manifest = await updateManifest(
-			expandPath(manifestPath),
+			absoluteManifestPath,
 			buildManifest({
 				baseline,
 				inputs: [inputHash],
@@ -334,6 +430,43 @@ async function synthesize(tokens) {
 
 function verifyExpected(tokens) {
 	const parsed = parseTokens(tokens);
+	validateParsedOptions(
+		parsed,
+		new Set([
+			"--preset",
+			"--width",
+			"--height",
+			"--fps",
+			"--duration",
+			"--duration-tolerance",
+			"--fps-tolerance",
+			"--video-codec",
+			"--audio-codec",
+			"--sample-rate",
+			"--manifest",
+			"--write-manifest",
+		]),
+		"verify",
+	);
+	validateRequiredValueOptions(
+		parsed,
+		[
+			"--preset",
+			"--width",
+			"--height",
+			"--fps",
+			"--duration",
+			"--duration-tolerance",
+			"--fps-tolerance",
+			"--video-codec",
+			"--audio-codec",
+			"--sample-rate",
+			"--manifest",
+			"--write-manifest",
+		],
+		"verify",
+	);
+	validatePositionalCount(parsed, 1, "verify");
 	const presetName = optionValue(parsed, "--preset");
 	const preset = presetName ? getPreset(presetName) : null;
 	if (presetName && !preset) {
@@ -368,10 +501,13 @@ async function verifyCommand(tokens) {
 	const verification = await verifyMedia(absoluteMediaPath, expected);
 	const [inputHash, baseline] = await Promise.all([hashFiles([absoluteMediaPath]), readBaseline()]);
 	const manifestPath = optionValue(parsed, "--manifest", "--write-manifest");
+	const absoluteManifestPath = manifestPath ? expandPath(manifestPath) : null;
+	if (absoluteManifestPath)
+		assertDistinctPath(absoluteManifestPath, [absoluteMediaPath], "Manifest path");
 	let manifest = null;
-	if (manifestPath) {
+	if (absoluteManifestPath) {
 		manifest = await updateManifest(
-			expandPath(manifestPath),
+			absoluteManifestPath,
 			buildManifest({
 				baseline,
 				preset,
@@ -398,8 +534,12 @@ async function verifyCommand(tokens) {
 }
 
 function upstreamExecutable() {
-	return (
-		process.env.MEGA_RECORDER_ELECTRON || path.join(REPO_ROOT, "node_modules", ".bin", "electron")
+	if (process.env.MEGA_RECORDER_ELECTRON) return process.env.MEGA_RECORDER_ELECTRON;
+	return path.join(
+		REPO_ROOT,
+		"node_modules",
+		".bin",
+		process.platform === "win32" ? "electron.cmd" : "electron",
 	);
 }
 
@@ -408,10 +548,26 @@ export async function delegateUpstream(kind, tokens) {
 	if (!tokens.includes("--json")) childArgs.push("--json");
 	return new Promise((resolve) => {
 		const child = spawn(upstreamExecutable(), childArgs, { stdio: ["inherit", "pipe", "inherit"] });
-		let stdout = "";
+		let lineBuffer = "";
+		let done;
+		const consume = (chunk) => {
+			lineBuffer += chunk;
+			const lines = lineBuffer.split(/\r?\n/);
+			lineBuffer = lines.pop() ?? "";
+			for (const line of lines) {
+				if (!line) continue;
+				try {
+					const event = JSON.parse(line);
+					if (event?.event === "done") done = event;
+				} catch {
+					// The upstream stream may include non-JSON diagnostics; only the
+					// terminal done event is part of this wrapper's contract.
+				}
+			}
+		};
 		child.stdout.setEncoding("utf8");
 		child.stdout.on("data", (chunk) => {
-			stdout += chunk;
+			consume(chunk);
 		});
 		child.once("error", (error) => {
 			resolve(
@@ -421,19 +577,7 @@ export async function delegateUpstream(kind, tokens) {
 			);
 		});
 		child.once("close", (exitCode, signal) => {
-			const events = stdout
-				.trim()
-				.split(/\r?\n/)
-				.filter(Boolean)
-				.map((line) => {
-					try {
-						return JSON.parse(line);
-					} catch {
-						return null;
-					}
-				})
-				.filter(Boolean);
-			const done = events.findLast((event) => event.event === "done");
+			if (lineBuffer.trim()) consume(`${lineBuffer}\n`);
 			if (!done) {
 				resolve(
 					failure(kind, "UPSTREAM_FAILED", "Upstream CLI did not return a done event", {
@@ -460,11 +604,21 @@ export async function runCommand(argv) {
 	const [root, ...tokens] = argv;
 	let commandName = root;
 	try {
-		if (root === "doctor") return await runDoctor();
+		if (root === "doctor") {
+			const parsed = parseTokens(tokens);
+			validateParsedOptions(parsed, new Set(), "doctor");
+			validatePositionalCount(parsed, 0, "doctor");
+			return await runDoctor();
+		}
 		if (root === "preset") {
 			const action = tokens.shift() ?? "show";
 			commandName = `preset ${action}`;
-			if (action === "show") return showPreset(parseTokens(tokens).positional[0] ?? "blue-studio");
+			if (action === "show") {
+				const parsed = parseTokens(tokens);
+				validateParsedOptions(parsed, new Set(), "preset show");
+				validatePositionalCount(parsed, 1, "preset show");
+				return showPreset(parsed.positional[0] ?? "blue-studio");
+			}
 			if (action === "apply") return await applyPreset(tokens);
 			throw Object.assign(new Error(`Unknown preset command: ${action}`), {
 				code: "CLI_ARGUMENT_ERROR",
@@ -473,7 +627,12 @@ export async function runCommand(argv) {
 		if (root === "kokoro") {
 			const action = tokens.shift() ?? "doctor";
 			commandName = `kokoro ${action}`;
-			if (action === "doctor") return await runKokoroDoctor();
+			if (action === "doctor") {
+				const parsed = parseTokens(tokens);
+				validateParsedOptions(parsed, new Set(), "kokoro doctor");
+				validatePositionalCount(parsed, 0, "kokoro doctor");
+				return await runKokoroDoctor();
+			}
 			if (action === "synthesize") return await synthesize(tokens);
 			throw Object.assign(new Error(`Unknown Kokoro command: ${action}`), {
 				code: "CLI_ARGUMENT_ERROR",
@@ -489,9 +648,11 @@ export async function runCommand(argv) {
 				: typeof error?.message === "string"
 					? error.message
 					: String(error);
-		return failure(commandName, error?.code ?? "COMMAND_FAILED", message, {
-			...(error?.path ? { path: error.path } : {}),
-		});
+		const details = {};
+		for (const key of ["path", "expected", "actual", "availableVoices", "attempts"]) {
+			if (error?.[key] !== undefined) details[key] = error[key];
+		}
+		return failure(commandName, error?.code ?? "COMMAND_FAILED", message, details);
 	}
 }
 

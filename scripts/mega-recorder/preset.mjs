@@ -62,6 +62,8 @@ const BLUE_STUDIO = Object.freeze({
 			borderRadius: 32,
 			padding: 40,
 			aspectRatio: "16:9",
+			exportFormat: "mp4",
+			exportQuality: "good",
 			autoZoomEnabled: true,
 			cursorTheme: "default",
 			// These extension keys are preserved by normalizeProjectEditor and
@@ -81,7 +83,7 @@ export const PRESETS = Object.freeze({
 });
 
 export function getPreset(id = "blue-studio") {
-	return PRESETS[id] ?? null;
+	return Object.hasOwn(PRESETS, id) ? PRESETS[id] : null;
 }
 
 export function listPresets() {
