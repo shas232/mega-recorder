@@ -1,0 +1,4 @@
+interface:
+  display_name: "MEGA Recorder"
+  short_description: "Record, edit, narrate, and verify locally"
+  default_prompt: "Use $mega-recorder to run the requested local recording, editing, narration, or verification workflow."
