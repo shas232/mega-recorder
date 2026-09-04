@@ -386,6 +386,23 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 			} else {
 				const tracks = await Promise.all(
 					attachedAudioTracks.map(async (track: AxcutAudioTrack) => {
+						// Muted/zero-gain tracks remain in the schedule so the persisted
+						// document is faithfully represented, but their source bytes are
+						// irrelevant and a missing muted file must not block export.
+						if (track.muted || track.volume <= 0) {
+							return {
+								data: new ArrayBuffer(0),
+								sourceStartSec: track.sourceStartSec,
+								sourceEndSec: track.sourceEndSec,
+								timelineStartSec: track.timelineStartSec,
+								timelineEndSec: track.timelineEndSec,
+								volume: track.volume,
+								muted: track.muted,
+								label: track.label,
+								status: track.status,
+								error: track.error,
+							};
+						}
 						const response = await fetch(toFileUrl(track.sourcePath));
 						if (!response.ok) {
 							throw new Error(
@@ -401,6 +418,8 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 							volume: track.volume,
 							muted: track.muted,
 							label: track.label,
+							status: track.status,
+							error: track.error,
 						};
 					}),
 				);

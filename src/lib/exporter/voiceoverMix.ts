@@ -42,6 +42,8 @@ export interface TimelineAudioTrackInput {
 	volume: number;
 	muted: boolean;
 	label?: string;
+	status?: "ready" | "missing" | "error";
+	error?: string;
 }
 
 export interface TimelineAudioMixOptions {
@@ -156,6 +158,11 @@ async function renderTimelineAudio(
 		const label = track.label ? ` \"${track.label}\"` : "";
 		if (track.muted || track.volume <= 0 || track.timelineEndSec <= track.timelineStartSec) {
 			continue;
+		}
+		if (track.status === "missing" || track.status === "error") {
+			throw new Error(
+				`Attached audio track${label} is ${track.status}${track.error ? `: ${track.error}` : ""}`,
+			);
 		}
 
 		let source: AudioBuffer;
