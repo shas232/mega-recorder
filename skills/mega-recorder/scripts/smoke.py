@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from bootstrap import PRODUCT_REF, valid_repo
+from bootstrap import PRODUCT_BASE_REF, valid_repo
 
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
@@ -76,7 +76,7 @@ def main() -> int:
                     "--url",
                     str(bare),
                     "--ref",
-                    PRODUCT_REF,
+                    PRODUCT_BASE_REF,
                     "--force-bootstrap",
                     "--json",
                 ]
