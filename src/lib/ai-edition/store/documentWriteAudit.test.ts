@@ -215,9 +215,11 @@ const DECLARED: WritePath[] = [
 	// Every timeline edit the user makes with the mouse or the keyboard.
 	// The Edit Clip dialog's Apply: source range and crop composed into ONE save (#355),
 	// where they used to be two writes that overwrote each other.
+	w("src/components/ai-edition/v4/V4Timeline.tsx", "updateAudioTrack", "save", "gesture"),
 	w("src/lib/ai-edition/store/useTimeline.ts", "applyClipEdit", "save", "gesture"),
 	w("src/lib/ai-edition/store/useTimeline.ts", "addAnnotation", "save", "gesture"),
 	w("src/lib/ai-edition/store/useTimeline.ts", "addCameraFullscreen", "save", "gesture"),
+	w("src/lib/ai-edition/store/useTimeline.ts", "addOverlay", "save", "gesture"),
 	w("src/lib/ai-edition/store/useTimeline.ts", "addSpeed", "save", "gesture"),
 	w("src/lib/ai-edition/store/useTimeline.ts", "addTrim", "save", "gesture"),
 	w("src/lib/ai-edition/store/useTimeline.ts", "addZoom", "save", "gesture"),

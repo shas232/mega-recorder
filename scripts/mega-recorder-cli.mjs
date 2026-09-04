@@ -1,11 +1,21 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+	ACTION_MANIFEST_SCHEMA_VERSION,
+	addActionToManifest,
+	applyActionsToDocument,
+	normalizeActionManifest,
+	readActionManifest,
+	startActionManifest,
+	writeActionManifest,
+} from "./mega-recorder/actions.mjs";
 import { createBrowserEditorServer } from "./mega-recorder/browser-editor-server.mjs";
 import {
 	KOKORO_MODEL_ID,
@@ -20,6 +30,14 @@ import {
 	hashNarration,
 	updateManifest,
 } from "./mega-recorder/manifest.mjs";
+import {
+	addOverlayToDocument,
+	createOverlay,
+	OVERLAY_ANCHORS,
+	OVERLAY_TYPES,
+	removeOverlayFromDocument,
+	validateOverlay,
+} from "./mega-recorder/overlays.mjs";
 import { applyPresetToProject, getPreset, listPresets } from "./mega-recorder/preset.mjs";
 import { deleteRangeFromDocument, writeDocumentAtomically } from "./mega-recorder/timeline.mjs";
 import { probeMedia, verifyMedia } from "./mega-recorder/verify.mjs";
@@ -40,8 +58,17 @@ const USAGE = [
 	"  mega-recorder kokoro doctor",
 	"  mega-recorder kokoro synthesize (--text <text> | --text-file <file>) [options]",
 	"  mega-recorder verify <media> [options]",
+	"  mega-recorder actions start [project] --output <manifest>",
+	"  mega-recorder actions add <manifest> --time <seconds> --label <text> (--point <x,y> | --rect <x,y,w,h>) [--output <manifest>]",
+	"  mega-recorder actions list <manifest>",
+	"  mega-recorder actions import <manifest> --output <manifest>",
+	"  mega-recorder actions apply <project> --manifest <manifest> [--output <file> | --in-place] [--callouts]",
 	"  mega-recorder edit <project> [--port <port>]  (browser editor; localhost only)",
 	"  mega-recorder edit delete <project> --start <seconds> --end <seconds> [--output <file> | --in-place]",
+	"  mega-recorder edit overlay add <project> --start <seconds> --end <seconds> --text <text> [--type title|label|callout|lower-third] [options]",
+	"  mega-recorder edit overlay list <project>",
+	"  mega-recorder edit overlay remove <project> --id <overlay-id> [--output <file> | --in-place]",
+	"  mega-recorder audio attach <project> --file <audio> [--start <seconds>] [options]",
 	"  mega-recorder record|export <upstream options>  (delegates to OpenScreen)",
 	"",
 	"Every command writes one stable JSON object to stdout. Diagnostics belong on stderr.",
@@ -605,6 +632,241 @@ async function verifyCommand(tokens) {
 	};
 }
 
+function coordinateList(raw, count, label) {
+	const values = String(raw ?? "")
+		.split(/[\s,]+/)
+		.filter(Boolean)
+		.map(Number);
+	if (values.length !== count || values.some((value) => !Number.isFinite(value))) {
+		throw Object.assign(new Error(`${label} must contain ${count} finite numbers`), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	}
+	return values;
+}
+
+function actionFromParsed(parsed) {
+	const time = optionValue(parsed, "--time", "--timestamp", "--timestamp-sec");
+	const label = requiredValue(parsed, ["--label"], "--label");
+	if (time === undefined) {
+		throw Object.assign(new Error("actions add requires --time"), { code: "CLI_ARGUMENT_ERROR" });
+	}
+	const action = { timestampSec: Number(time), label };
+	const point = optionValue(parsed, "--point");
+	const rect = optionValue(parsed, "--rect", "--target-rect");
+	if (point !== undefined && rect !== undefined)
+		throw Object.assign(new Error("Use either --point or --rect, not both"), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	if (point === undefined && rect === undefined)
+		throw Object.assign(new Error("actions add requires --point or --rect"), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	if (point !== undefined) {
+		const [x, y] = coordinateList(point, 2, "--point");
+		action.point = { x, y };
+	}
+	if (rect !== undefined) {
+		const [x, y, width, height] = coordinateList(rect, 4, "--rect");
+		action.targetRect = { x, y, width, height };
+	}
+	const sceneId = optionValue(parsed, "--scene-id");
+	const id = optionValue(parsed, "--id");
+	if (sceneId !== undefined) action.sceneId = sceneId;
+	if (id !== undefined) action.id = id;
+	return action;
+}
+
+async function actionsCommand(tokens) {
+	const actionName = tokens.shift() ?? "list";
+	const command = `actions ${actionName}`;
+	if (actionName === "start") {
+		const parsed = parseTokens(tokens);
+		validateParsedOptions(
+			parsed,
+			new Set(["--output", "--out", "-o", "--project", "-p", "--project-id", "--asset-id"]),
+			command,
+		);
+		validateRequiredValueOptions(
+			parsed,
+			["--output", "--out", "-o", "--project", "-p", "--project-id", "--asset-id"],
+			command,
+		);
+		validatePositionalCount(parsed, 1, command);
+		const projectValue = optionValue(parsed, "--project", "-p") ?? parsed.positional[0];
+		let projectId = optionValue(parsed, "--project-id");
+		let assetId = optionValue(parsed, "--asset-id");
+		if (projectValue) {
+			const source = await readJson(expandPath(projectValue));
+			projectId ??= source.project?.id;
+			assetId ??= source.project?.primaryAssetId ?? source.assets?.[0]?.id;
+		}
+		const manifest = startActionManifest({ projectId, assetId });
+		const outputPath = expandPath(optionValue(parsed, "--output", "--out", "-o") ?? "actions.json");
+		await writeActionManifest(outputPath, manifest);
+		return result(command, {
+			manifestPath: outputPath,
+			schemaVersion: ACTION_MANIFEST_SCHEMA_VERSION,
+			projectId: manifest.projectId ?? null,
+			assetId: manifest.assetId ?? null,
+			actionCount: 0,
+		});
+	}
+	if (actionName === "add") {
+		const parsed = parseTokens(tokens);
+		validateParsedOptions(
+			parsed,
+			new Set([
+				"--time",
+				"--timestamp",
+				"--timestamp-sec",
+				"--label",
+				"--point",
+				"--rect",
+				"--target-rect",
+				"--scene-id",
+				"--id",
+				"--output",
+				"--out",
+				"-o",
+			]),
+			command,
+		);
+		validateRequiredValueOptions(
+			parsed,
+			[
+				"--time",
+				"--timestamp",
+				"--timestamp-sec",
+				"--label",
+				"--point",
+				"--rect",
+				"--target-rect",
+				"--scene-id",
+				"--id",
+				"--output",
+				"--out",
+				"-o",
+			],
+			command,
+		);
+		validatePositionalCount(parsed, 1, command);
+		const manifestValue = parsed.positional[0];
+		if (!manifestValue)
+			throw Object.assign(new Error("actions add requires a manifest path"), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		const manifestPath = expandPath(manifestValue);
+		const next = addActionToManifest(
+			await readActionManifest(manifestPath),
+			actionFromParsed(parsed),
+		);
+		const outputPath = expandPath(optionValue(parsed, "--output", "--out", "-o") ?? manifestPath);
+		await writeActionManifest(outputPath, next);
+		return result(command, {
+			manifestPath: outputPath,
+			action: next.actions.at(-1),
+			actionCount: next.actions.length,
+		});
+	}
+	if (actionName === "list") {
+		const parsed = parseTokens(tokens);
+		validateParsedOptions(parsed, new Set(), command);
+		validatePositionalCount(parsed, 1, command);
+		const manifestPath = parsed.positional[0];
+		if (!manifestPath)
+			throw Object.assign(new Error("actions list requires a manifest path"), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		const manifest = await readActionManifest(expandPath(manifestPath));
+		return result(command, {
+			manifestPath: expandPath(manifestPath),
+			manifest,
+			actions: manifest.actions,
+		});
+	}
+	if (actionName === "import") {
+		const parsed = parseTokens(tokens);
+		validateParsedOptions(parsed, new Set(["--output", "--out", "-o"]), command);
+		validateRequiredValueOptions(parsed, ["--output", "--out", "-o"], command);
+		validatePositionalCount(parsed, 1, command);
+		const inputPath = parsed.positional[0];
+		if (!inputPath)
+			throw Object.assign(new Error("actions import requires an input path"), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		const outputPath = expandPath(
+			optionValue(parsed, "--output", "--out", "-o") ?? "actions.imported.json",
+		);
+		const manifest = normalizeActionManifest(await readJson(expandPath(inputPath)));
+		await writeActionManifest(outputPath, manifest);
+		return result(command, {
+			inputPath: expandPath(inputPath),
+			manifestPath: outputPath,
+			actionCount: manifest.actions.length,
+		});
+	}
+	if (actionName === "apply") {
+		const parsed = parseTokens(tokens);
+		validateParsedOptions(
+			parsed,
+			new Set(["--manifest", "--output", "--out", "-o", "--in-place", "--callouts"]),
+			command,
+		);
+		validateRequiredValueOptions(parsed, ["--manifest", "--output", "--out", "-o"], command);
+		validatePositionalCount(parsed, 1, command);
+		const projectValue = parsed.positional[0];
+		if (!projectValue)
+			throw Object.assign(new Error("actions apply requires a project path"), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		const projectPath = expandPath(projectValue);
+		const manifestPath = expandPath(requiredValue(parsed, ["--manifest"], "--manifest"));
+		const source = await readJson(projectPath);
+		// Native recordings commonly arrive as legacy v2 sidecars. Promote them
+		// before applying source-time actions so the same command works for both
+		// freshly-recorded and already-migrated projects.
+		const document = await migrateLegacyProjectForCli(source);
+		const manifest = await readActionManifest(manifestPath);
+		const applied = applyActionsToDocument(document, manifest, {
+			includeCallouts: parsed.flags.has("--callouts"),
+		});
+		const outputPath = editOutputPath(projectPath, parsed);
+		await fs.mkdir(path.dirname(outputPath), { recursive: true });
+		if (outputPath === projectPath) await writeDocumentAtomically(outputPath, applied.document);
+		else await writeDocumentAtomically(outputPath, applied.document);
+		const assetId =
+			manifest.assetId ??
+			applied.document.project?.primaryAssetId ??
+			applied.document.assets?.[0]?.id;
+		const asset = applied.document.assets?.find((item) => item.id === assetId);
+		let cursorTelemetryPath = null;
+		let cursorTelemetryPreserved = false;
+		if (asset?.originalPath) {
+			cursorTelemetryPath = `${asset.originalPath}.cursor.json`;
+			cursorTelemetryPreserved = await fs
+				.stat(cursorTelemetryPath)
+				.then((info) => info.isFile())
+				.catch(() => false);
+		}
+		return result(command, {
+			projectPath,
+			outputPath,
+			manifestPath,
+			actionCount: applied.actions.length,
+			generatedZoomCount: applied.generatedZoomCount,
+			generatedCalloutCount: applied.generatedCalloutCount,
+			unmappedActionIds: applied.unmappedActionIds,
+			mediaTouched: false,
+			cursorTelemetryPath,
+			cursorTelemetryPreserved,
+		});
+	}
+	throw Object.assign(new Error(`Unknown actions command: ${actionName}`), {
+		code: "CLI_ARGUMENT_ERROR",
+	});
+}
+
 function editOutputPath(projectPath, parsed) {
 	const requested = optionValue(parsed, "--output", "--out", "-o");
 	const inPlace = parsed.flags.has("--in-place");
@@ -650,7 +912,11 @@ async function editDeleteCommand(tokens) {
 		});
 	}
 	const source = await readJson(projectPath);
-	const edited = deleteRangeFromDocument(source, startSec, endSec);
+	// Native recordings arrive as legacy v2 sidecars. Promote them at the edit
+	// boundary so a ripple cut carries attached narration, overlays, actions and
+	// framing through the same current-document remapper as Axcut projects.
+	const document = await migrateLegacyProjectForCli(source);
+	const edited = deleteRangeFromDocument(document, startSec, endSec);
 	const outputPath = editOutputPath(projectPath, parsed);
 	await fs.mkdir(path.dirname(outputPath), { recursive: true });
 	if (edited.changed) await writeDocumentAtomically(outputPath, edited.document);
@@ -666,8 +932,611 @@ async function editDeleteCommand(tokens) {
 	});
 }
 
+function isAxcutProject(value) {
+	return Boolean(
+		value &&
+			typeof value === "object" &&
+			value.project &&
+			typeof value.project === "object" &&
+			value.timeline &&
+			typeof value.timeline === "object" &&
+			Array.isArray(value.assets),
+	);
+}
+
+/**
+ * Lift a legacy v2 .openscreen file into the current CLI document shape.
+ *
+ * Native recordings still produce the small v2 sidecar.  Keeping this bridge in
+ * the CLI means an agent can immediately attach narration, apply computer-use
+ * actions, add overlays, and ripple-cut that recording without first opening it
+ * in Electron.  The conversion only writes a new sibling file; source media is
+ * never changed.
+ */
+async function migrateLegacyProjectForCli(source) {
+	if (isAxcutProject(source)) return source;
+	if (!source || typeof source !== "object" || typeof source.version !== "number") {
+		throw Object.assign(new Error("Project is not a supported .openscreen document"), {
+			code: "PROJECT_FORMAT_UNSUPPORTED",
+		});
+	}
+	const legacy = source;
+	const editor = legacy.editor && typeof legacy.editor === "object" ? legacy.editor : {};
+	const media = legacy.media && typeof legacy.media === "object" ? legacy.media : {};
+	const screenPath = media.screenVideoPath ?? legacy.videoPath;
+	if (typeof screenPath !== "string" || !screenPath) {
+		throw Object.assign(new Error("Project does not reference a screen recording"), {
+			code: "PROJECT_MEDIA_MISSING",
+		});
+	}
+	const probed = await probeMedia(screenPath);
+	const durationSec = probed.metadata.durationSec;
+	if (!(typeof durationSec === "number" && durationSec > 0)) {
+		throw Object.assign(new Error(`Project video duration is unknown: ${screenPath}`), {
+			code: "VIDEO_DURATION_UNKNOWN",
+		});
+	}
+	const now = new Date().toISOString();
+	const projectId =
+		typeof legacy.project?.id === "string" ? legacy.project.id : `proj_${randomUUID()}`;
+	const assetId = `asset_${randomUUID()}`;
+	const clipId = `clip_${randomUUID()}`;
+	const cameraPath = typeof media.webcamVideoPath === "string" ? media.webcamVideoPath : "";
+	const asset = {
+		id: assetId,
+		kind: "video",
+		label: path.basename(screenPath),
+		originalPath: screenPath,
+		durationSec,
+		...(probed.metadata.video
+			? {
+					video: {
+						codec: probed.metadata.video.codec ?? "unknown",
+						width: probed.metadata.video.width ?? 0,
+						height: probed.metadata.video.height ?? 0,
+						fps: probed.metadata.video.fps ?? 0,
+					},
+				}
+			: {}),
+		...(probed.metadata.audio
+			? {
+					audio: {
+						codec: probed.metadata.audio.codec ?? "unknown",
+						sampleRate: probed.metadata.audio.sampleRate ?? 0,
+						channels: probed.metadata.audio.channels ?? 0,
+					},
+				}
+			: {}),
+		cameraTrack: cameraPath
+			? {
+					sourcePath: cameraPath,
+					startMs: 0,
+					offsetMs: Math.round(Number(media.webcamOffsetMs) || 0),
+					visible: true,
+				}
+			: null,
+	};
+	const clip = {
+		id: clipId,
+		assetId,
+		sourceStartSec: 0,
+		sourceEndSec: durationSec,
+		timelineStartSec: 0,
+		timelineEndSec: durationSec,
+		wordRefs: [],
+		origin: "system",
+		reason: "migrated from legacy .openscreen",
+	};
+	const legacyAudioTracks = Array.isArray(legacy.audioTracks)
+		? legacy.audioTracks
+		: Array.isArray(editor.audioTracks)
+			? editor.audioTracks
+			: [];
+	const audioTracks = legacyAudioTracks.flatMap((raw, index) => {
+		if (!raw || typeof raw !== "object") return [];
+		const track = raw;
+		const sourcePath =
+			typeof track.sourcePath === "string" && track.sourcePath ? track.sourcePath : null;
+		if (!sourcePath) return [];
+		const sourceStartSec = Math.max(0, Number(track.sourceStartSec) || 0);
+		const sourceEndSec = Number(track.sourceEndSec);
+		const timelineStartSec = Math.max(0, Number(track.timelineStartSec ?? track.startSec) || 0);
+		const timelineEndSec = Number(track.timelineEndSec);
+		if (!Number.isFinite(sourceEndSec) || sourceEndSec <= sourceStartSec) return [];
+		if (!Number.isFinite(timelineEndSec) || timelineEndSec <= timelineStartSec) return [];
+		const volumeValue = Number(track.volume);
+		return [
+			{
+				id: typeof track.id === "string" ? track.id : `audio_${index + 1}`,
+				kind: track.kind === "narration" ? "narration" : "audio",
+				label: typeof track.label === "string" && track.label ? track.label : "Attached audio",
+				sourcePath,
+				...(typeof track.voice === "string" && track.voice ? { voice: track.voice } : {}),
+				sourceStartSec,
+				sourceEndSec,
+				timelineStartSec,
+				timelineEndSec,
+				volume: Number.isFinite(volumeValue) ? Math.min(2, Math.max(0, volumeValue)) : 1,
+				muted: track.muted === true,
+				status: track.status === "missing" || track.status === "error" ? track.status : "ready",
+				...(typeof track.error === "string" ? { error: track.error } : {}),
+			},
+		];
+	});
+	const trimRanges = Array.isArray(editor.trimRegions)
+		? editor.trimRegions.flatMap((raw, index) => {
+				if (!raw || typeof raw !== "object") return [];
+				const startSec = Math.max(0, Number(raw.startMs) / 1000 || 0);
+				const endSec = Math.min(durationSec, Number(raw.endMs) / 1000 || 0);
+				return endSec > startSec
+					? [
+							{
+								id: typeof raw.id === "string" ? raw.id : `trim_${index + 1}`,
+								assetId,
+								clipId,
+								startSec,
+								endSec,
+								reason: "migrated from legacy trim",
+								origin: "user",
+							},
+						]
+					: [];
+			})
+		: [];
+	const annotations = Array.isArray(editor.annotationRegions) ? editor.annotationRegions : [];
+	const zoomRanges = Array.isArray(editor.zoomRegions) ? editor.zoomRegions : [];
+	return {
+		schemaVersion: 7,
+		project: {
+			id: projectId,
+			title: "MEGA RECORDER project",
+			createdAt: now,
+			updatedAt: now,
+			primaryAssetId: assetId,
+		},
+		assets: [asset],
+		transcript: null,
+		transcripts: [],
+		timeline: {
+			clips: [clip],
+			gaps: [],
+			trimRanges,
+			muteRanges: [],
+			speedRanges: [],
+			captionRanges: [],
+			audioTracks,
+			audioMixMode:
+				legacy.audioMixMode === "replace" || editor.audioMixMode === "replace" ? "replace" : "mix",
+		},
+		annotations,
+		overlays: [],
+		zoomRanges,
+		actions: [],
+		legacyEditor: editor,
+	};
+}
+
+function parsePair(value, label) {
+	const parts = String(value ?? "")
+		.split(",")
+		.map((part) => Number(part.trim()));
+	if (parts.length !== 2 || parts.some((part) => !Number.isFinite(part)))
+		throw Object.assign(new Error(`${label} must be two comma-separated numbers`), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	return { x: parts[0], y: parts[1] };
+}
+
+function parseQuad(value, label) {
+	const parts = String(value ?? "")
+		.split(",")
+		.map((part) => Number(part.trim()));
+	if (parts.length !== 2 || parts.some((part) => !Number.isFinite(part)))
+		throw Object.assign(new Error(`${label} must be two comma-separated numbers (width,height)`), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	return { width: parts[0], height: parts[1] };
+}
+
+function overlayOutputPath(projectPath, parsed) {
+	const requested = optionValue(parsed, "--output", "--out", "-o");
+	const inPlace = parsed.flags.has("--in-place");
+	if (inPlace && requested !== undefined) {
+		throw Object.assign(new Error("Use either --in-place or --output, not both"), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	}
+	const outputPath = inPlace
+		? projectPath
+		: expandPath(
+				requested ??
+					`${projectPath.replace(/\.(openscreen|axcut)$/i, "")}.overlays${path.extname(projectPath)}`,
+			);
+	if (!inPlace) assertDistinctPath(outputPath, [projectPath], "Overlay output");
+	return outputPath;
+}
+
+async function editOverlayCommand(tokens) {
+	const action = tokens.shift() ?? "list";
+	const command = `edit overlay ${action}`;
+	const parsed = parseTokens(tokens);
+	const common = new Set(["--output", "--out", "-o", "--in-place"]);
+	if (action === "list") {
+		validateParsedOptions(parsed, new Set(), command);
+		validatePositionalCount(parsed, 1, command);
+		const projectValue = parsed.positional[0];
+		if (!projectValue)
+			throw Object.assign(new Error(`${command} requires a project path`), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		const projectPath = expandPath(projectValue);
+		const source = await readJson(projectPath);
+		const document = await migrateLegacyProjectForCli(source);
+		const overlays = (document.overlays ?? []).map((overlay) => validateOverlay(overlay));
+		return result(command, { projectPath, overlays, overlayCount: overlays.length });
+	}
+	if (action === "add") {
+		validateParsedOptions(
+			parsed,
+			new Set([
+				"--start",
+				"--end",
+				"--text",
+				"--type",
+				"--position",
+				"--anchor",
+				"--size",
+				"--space",
+				"--color",
+				"--background",
+				"--font-size",
+				"--font-family",
+				"--font-weight",
+				"--font-style",
+				"--text-align",
+				"--opacity",
+				"--z-index",
+				...common,
+			]),
+			command,
+		);
+		validateRequiredValueOptions(
+			parsed,
+			[
+				"--start",
+				"--end",
+				"--text",
+				"--type",
+				"--position",
+				"--anchor",
+				"--size",
+				"--space",
+				"--color",
+				"--background",
+				"--font-size",
+				"--font-family",
+				"--font-weight",
+				"--font-style",
+				"--text-align",
+				"--opacity",
+				"--z-index",
+				"--output",
+				"--out",
+				"-o",
+			],
+			command,
+		);
+		validatePositionalCount(parsed, 1, command);
+		const projectValue = parsed.positional[0];
+		if (!projectValue)
+			throw Object.assign(new Error(`${command} requires a project path`), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		const projectPath = expandPath(projectValue);
+		const source = await readJson(projectPath);
+		const document = await migrateLegacyProjectForCli(source);
+		const type = optionValue(parsed, "--type") ?? "label";
+		if (!OVERLAY_TYPES.includes(type))
+			throw Object.assign(new Error(`--type must be one of ${OVERLAY_TYPES.join(", ")}`), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		const anchor = optionValue(parsed, "--anchor");
+		if (anchor !== undefined && !OVERLAY_ANCHORS.includes(anchor))
+			throw Object.assign(new Error(`--anchor must be one of ${OVERLAY_ANCHORS.join(", ")}`), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		const positionValue = optionValue(parsed, "--position");
+		const sizeValue = optionValue(parsed, "--size");
+		const position = positionValue ? parsePair(positionValue, "--position") : undefined;
+		const size = sizeValue ? parseQuad(sizeValue, "--size") : undefined;
+		const style = {
+			...(optionValue(parsed, "--color") ? { color: optionValue(parsed, "--color") } : {}),
+			...(optionValue(parsed, "--background")
+				? { backgroundColor: optionValue(parsed, "--background") }
+				: {}),
+			...(optionValue(parsed, "--font-size")
+				? { fontSize: numberValue(parsed, ["--font-size"], "--font-size", { min: 1 }) }
+				: {}),
+			...(optionValue(parsed, "--font-family")
+				? { fontFamily: optionValue(parsed, "--font-family") }
+				: {}),
+			...(optionValue(parsed, "--font-weight")
+				? { fontWeight: optionValue(parsed, "--font-weight") }
+				: {}),
+			...(optionValue(parsed, "--font-style")
+				? { fontStyle: optionValue(parsed, "--font-style") }
+				: {}),
+			...(optionValue(parsed, "--text-align")
+				? { textAlign: optionValue(parsed, "--text-align") }
+				: {}),
+			...(optionValue(parsed, "--opacity")
+				? { opacity: numberValue(parsed, ["--opacity"], "--opacity", { min: 0 }) }
+				: {}),
+		};
+		const startSec = numberValue(parsed, ["--start"], "--start", { min: 0 });
+		const endSec = numberValue(parsed, ["--end"], "--end", { min: 0 });
+		const overlay = createOverlay({
+			startSec,
+			endSec,
+			text: requiredValue(parsed, ["--text"], "--text"),
+			type,
+			position,
+			anchor,
+			size,
+			space: optionValue(parsed, "--space"),
+			style,
+			zIndex: optionValue(parsed, "--z-index")
+				? numberValue(parsed, ["--z-index"], "--z-index", { integer: true, min: 0 })
+				: undefined,
+		});
+		const next = {
+			...addOverlayToDocument(document, overlay),
+			project: { ...document.project, updatedAt: new Date().toISOString() },
+		};
+		const outputPath = overlayOutputPath(projectPath, parsed);
+		await fs.mkdir(path.dirname(outputPath), { recursive: true });
+		await writeDocumentAtomically(outputPath, next);
+		return result(command, {
+			projectPath,
+			outputPath,
+			overlay,
+			overlayCount: next.overlays.length,
+			mediaTouched: false,
+		});
+	}
+	if (action === "remove") {
+		validateParsedOptions(parsed, new Set(["--id", ...common]), command);
+		validateRequiredValueOptions(parsed, ["--id", "--output", "--out", "-o"], command);
+		validatePositionalCount(parsed, 1, command);
+		const projectValue = parsed.positional[0];
+		const overlayId = optionValue(parsed, "--id");
+		if (!projectValue || !overlayId)
+			throw Object.assign(new Error(`${command} requires a project path and --id`), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		const projectPath = expandPath(projectValue);
+		const source = await readJson(projectPath);
+		const document = await migrateLegacyProjectForCli(source);
+		const before = Array.isArray(document.overlays) ? document.overlays : [];
+		if (!before.some((overlay) => overlay.id === overlayId))
+			throw Object.assign(new Error(`Unknown overlay id: ${overlayId}`), {
+				code: "OVERLAY_NOT_FOUND",
+			});
+		const next = {
+			...removeOverlayFromDocument(document, overlayId),
+			project: { ...document.project, updatedAt: new Date().toISOString() },
+		};
+		const outputPath = overlayOutputPath(projectPath, parsed);
+		await fs.mkdir(path.dirname(outputPath), { recursive: true });
+		await writeDocumentAtomically(outputPath, next);
+		return result(command, {
+			projectPath,
+			outputPath,
+			removedOverlayId: overlayId,
+			overlayCount: next.overlays.length,
+			mediaTouched: false,
+		});
+	}
+	throw Object.assign(new Error(`Unknown overlay command: ${action}`), {
+		code: "CLI_ARGUMENT_ERROR",
+	});
+}
+
+function audioAttachOutputPath(projectPath, parsed) {
+	const requested = optionValue(parsed, "--output", "--out", "-o");
+	const inPlace = parsed.flags.has("--in-place");
+	if (inPlace && requested !== undefined) {
+		throw Object.assign(new Error("Use either --in-place or --output, not both"), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	}
+	const outputPath = inPlace
+		? projectPath
+		: expandPath(
+				requested ??
+					`${projectPath.replace(/\.(openscreen|axcut)$/i, "")}.with-audio${path.extname(projectPath)}`,
+			);
+	if (!inPlace) assertDistinctPath(outputPath, [projectPath], "Audio attach output");
+	return outputPath;
+}
+
+async function audioAttachCommand(tokens) {
+	const parsed = parseTokens(tokens);
+	validateParsedOptions(
+		parsed,
+		new Set([
+			"--file",
+			"--audio",
+			"--input",
+			"-a",
+			"--label",
+			"--voice",
+			"--start",
+			"--timeline-start",
+			"--source-start",
+			"--source-end",
+			"--volume",
+			"--mode",
+			"--output",
+			"--out",
+			"-o",
+			"--in-place",
+			"--manifest",
+		]),
+		"audio attach",
+	);
+	validateRequiredValueOptions(
+		parsed,
+		[
+			"--file",
+			"--audio",
+			"--input",
+			"-a",
+			"--label",
+			"--voice",
+			"--start",
+			"--timeline-start",
+			"--source-start",
+			"--source-end",
+			"--volume",
+			"--mode",
+			"--output",
+			"--out",
+			"-o",
+			"--manifest",
+		],
+		"audio attach",
+	);
+	validatePositionalCount(parsed, 1, "audio attach");
+	const projectValue = parsed.positional[0];
+	if (!projectValue)
+		throw Object.assign(new Error("audio attach requires a project path"), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	const audioValue = optionValue(parsed, "--file", "--audio", "--input", "-a");
+	if (!audioValue) {
+		throw Object.assign(new Error("audio attach requires --file <audio>"), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	}
+	const projectPath = expandPath(projectValue);
+	const audioPath = expandPath(audioValue);
+	const source = await readJson(projectPath);
+	if (!isAxcutProject(source) && !(typeof source?.version === "number" && source.editor)) {
+		throw Object.assign(
+			new Error(
+				"audio attach requires an Axcut .openscreen project or a legacy OpenScreen project",
+			),
+			{ code: "PROJECT_FORMAT_UNSUPPORTED" },
+		);
+	}
+	const probed = await probeMedia(audioPath);
+	if (!probed.metadata.audio) {
+		throw Object.assign(new Error(`Audio file has no audio stream: ${audioPath}`), {
+			code: "AUDIO_STREAM_MISSING",
+		});
+	}
+	const durationSec = probed.metadata.durationSec;
+	if (!(typeof durationSec === "number" && Number.isFinite(durationSec) && durationSec > 0)) {
+		throw Object.assign(new Error(`Audio duration is unknown: ${audioPath}`), {
+			code: "AUDIO_DURATION_UNKNOWN",
+		});
+	}
+	const sourceStartSec = numberValue(parsed, ["--source-start"], "--source-start", { min: 0 }) ?? 0;
+	const sourceEndSec =
+		numberValue(parsed, ["--source-end"], "--source-end", { min: 0 }) ?? durationSec;
+	const timelineStartSec =
+		numberValue(parsed, ["--timeline-start", "--start"], "--start", { min: 0 }) ?? 0;
+	const volumeRaw = optionValue(parsed, "--volume");
+	const volume = volumeRaw === undefined ? 1 : Number(volumeRaw);
+	if (!Number.isFinite(volume) || volume < 0 || volume > 2) {
+		throw Object.assign(new Error("--volume must be a number between 0 and 2"), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	}
+	if (!(sourceEndSec > sourceStartSec) || sourceEndSec > durationSec + 0.001) {
+		throw Object.assign(
+			new Error(
+				`Audio source range must satisfy 0 <= source-start < source-end <= ${durationSec.toFixed(3)}s`,
+			),
+			{ code: "AUDIO_RANGE_INVALID", expected: durationSec },
+		);
+	}
+	const mode = optionValue(parsed, "--mode") ?? "mix";
+	if (mode !== "mix" && mode !== "replace") {
+		throw Object.assign(new Error(`--mode must be mix or replace, got "${mode}"`), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	}
+	const label = optionValue(parsed, "--label") ?? path.basename(audioPath);
+	const voice = optionValue(parsed, "--voice");
+	const track = {
+		id: `audio_${randomUUID().replaceAll("-", "")}`,
+		kind: voice ? "narration" : "audio",
+		label,
+		sourcePath: audioPath,
+		...(voice ? { voice } : {}),
+		sourceStartSec,
+		sourceEndSec,
+		timelineStartSec,
+		timelineEndSec: timelineStartSec + sourceEndSec - sourceStartSec,
+		volume,
+		muted: false,
+		status: "ready",
+	};
+	const next = isAxcutProject(source)
+		? {
+				...source,
+				project: { ...source.project, updatedAt: new Date().toISOString() },
+				timeline: {
+					...source.timeline,
+					audioTracks: [
+						...(Array.isArray(source.timeline.audioTracks) ? source.timeline.audioTracks : []),
+						track,
+					],
+					audioMixMode: mode,
+				},
+			}
+		: {
+				...source,
+				audioTracks: [...(Array.isArray(source.audioTracks) ? source.audioTracks : []), track],
+				audioMixMode: mode,
+			};
+	const outputPath = audioAttachOutputPath(projectPath, parsed);
+	const manifestPath = optionValue(parsed, "--manifest");
+	const absoluteManifestPath = manifestPath ? expandPath(manifestPath) : null;
+	if (absoluteManifestPath)
+		assertDistinctPath(absoluteManifestPath, [outputPath, projectPath], "Manifest path");
+	await fs.mkdir(path.dirname(outputPath), { recursive: true });
+	if (outputPath === projectPath) await writeDocumentAtomically(outputPath, next);
+	else await writeDocumentAtomically(outputPath, next);
+	const [input, output, baseline] = await Promise.all([
+		hashFiles([audioPath]),
+		hashFiles([outputPath]),
+		readBaseline(),
+	]);
+	const manifest = absoluteManifestPath
+		? await updateManifest(
+				absoluteManifestPath,
+				buildManifest({ baseline, inputs: input, outputs: output, command: "audio attach" }),
+			)
+		: null;
+	return result("audio attach", {
+		projectPath,
+		outputPath,
+		track,
+		trackCount: isAxcutProject(next) ? next.timeline.audioTracks.length : next.audioTracks.length,
+		mode,
+		input: input[0],
+		output: output[0],
+		manifest,
+		mediaTouched: false,
+	});
+}
+
 async function editCommand(tokens) {
 	if (tokens[0] === "delete") return editDeleteCommand(tokens.slice(1));
+	if (tokens[0] === "overlay") return editOverlayCommand(tokens.slice(1));
 	const parsed = parseTokens(tokens);
 	validateParsedOptions(
 		parsed,
@@ -839,7 +1708,16 @@ export async function runCommand(argv) {
 			});
 		}
 		if (root === "verify") return await verifyCommand(tokens);
+		if (root === "actions") return await actionsCommand(tokens);
 		if (root === "edit") return await editCommand(tokens);
+		if (root === "audio") {
+			const action = tokens.shift() ?? "attach";
+			commandName = `audio ${action}`;
+			if (action === "attach") return await audioAttachCommand(tokens);
+			throw Object.assign(new Error(`Unknown audio command: ${action}`), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		}
 		if (root === "record" || root === "export") return await delegateUpstream(root, tokens);
 		throw Object.assign(new Error(`Unknown command: ${root}`), { code: "CLI_ARGUMENT_ERROR" });
 	} catch (error) {

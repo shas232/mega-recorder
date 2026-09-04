@@ -2,13 +2,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { runCommand } from "../mega-recorder-cli.mjs";
 import {
 	addActionToManifest,
 	applyActionsToDocument,
 	normalizeActionManifest,
 	startActionManifest,
 } from "./actions.mjs";
-import { runCommand } from "../mega-recorder-cli.mjs";
 import { deleteRangeFromDocument } from "./timeline.mjs";
 
 function fixture() {

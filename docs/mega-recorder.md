@@ -8,7 +8,13 @@ npm run --silent mega-recorder -- doctor
 npm run --silent mega-recorder -- preset show blue-studio
 npm run --silent mega-recorder -- preset apply blue-studio --project demo.openscreen
 npm run --silent mega-recorder -- kokoro synthesize --text "Welcome" --voice am_michael --output narration.wav
+npm run --silent mega-recorder -- audio attach demo.openscreen --file narration.wav --voice af_heart --start 12 --mode mix --in-place
 npm run --silent mega-recorder -- verify demo.mp4 --preset blue-studio --manifest demo.mega.json
+npm run --silent mega-recorder -- actions start demo.openscreen --output demo.actions.json
+npm run --silent mega-recorder -- actions add demo.actions.json --time 12.4 --label "Click Save" --point 0.72,0.31
+npm run --silent mega-recorder -- actions apply demo.openscreen --manifest demo.actions.json --callouts
+npm run --silent mega-recorder -- edit overlay add demo.openscreen --start 0.4 --end 2.2 --text "MEGA Recorder" --type title --position 50,12 --size 76,14
+npm run --silent mega-recorder -- edit delete demo.openscreen --start 12.0 --end 12.4 --output demo.cut.openscreen
 ```
 
 The `blue-studio` preset targets a 1920×1080, 60 fps output, a blurred blue
@@ -71,6 +77,10 @@ copy `/Applications/Openscreen.app`; the upstream `LICENSE` and
 requires the user's normal macOS Screen Recording permission and is driven by
 the hidden Electron CLI runner, not a visible desktop window.
 
+Native MP4 export burns the persisted overlays and framing, then mixes every
+unmuted local audio/narration track on its timeline. GIF export has no audio
+stream.
+
 ## Browser editor
 
 `mega-recorder edit <project>` starts a localhost-only server for the existing
@@ -84,12 +94,74 @@ npm run build-vite
 npm run --silent mega-recorder -- edit ./demo.openscreen
 ```
 
-The browser milestone supports inspection and existing timeline cut/trim
-editing. Native capture, native compositor preview, camera playback, AI
-provider calls, and export remain desktop-only and are explicitly unsupported
-in this adapter.
+The browser editor exposes the complete relevant timeline: video clips,
+audio/narration, timed overlays, host actions, annotations, speed, trims,
+zooms, camera, and playback controls. Native capture, native compositor
+preview, camera playback, and export remain desktop-only. There is no BYO AI or
+provider configuration in the browser editor; host-agent actions and local
+Kokoro are the only AI-adjacent integrations.
 
 For non-interactive agent use, `edit delete <project> --start <seconds>
 --end <seconds>` performs a media-preserving ripple delete and writes a sibling
 `.edited.openscreen` by default. Add `--in-place` to update the selected project
 file explicitly.
+
+## Attached audio and narration
+
+`audio attach` adds a local WAV/MP3/M4A/etc. to the selected project's timeline.
+It probes the file with `ffprobe`, persists the source range and timeline range,
+and marks a supplied `--voice` as Kokoro narration. `--mode mix` keeps the
+recording audio underneath at the export ducking level; `--mode replace` emits
+the attached tracks as the only audio. The command writes a sibling
+`.with-audio.openscreen` by default; pass `--in-place` when overwriting the
+selected project is intentional. `--manifest` records input/output hashes
+without embedding narration text.
+
+```bash
+npm run --silent mega-recorder -- audio attach demo.openscreen \
+  --file narration.wav --voice af_heart --start 12 --mode mix --in-place
+```
+
+The browser timeline shows each attached block with its label, Kokoro voice (or
+audio type), duration, status, play/pause, mute, and volume controls. A ripple
+delete removes overlapped audio, shifts surviving ranges left, and splits a
+track at the cut while advancing its source offset so playback never restarts
+unexpectedly. MP4 export renders every unmuted track on its persisted timeline
+range. Missing files, undecodable audio, invalid source ranges, and tracks that
+outlive the video fail with an explicit duration-sync/read error; GIF export
+rejects attached audio because the native GIF container has no audio stream.
+Legacy v2 native `.openscreen` sidecars are promoted automatically when an
+overlay, action, or ripple-delete command needs the current timeline model; the
+source sidecar and media remain untouched.
+
+## Host-agent actions and framing
+
+The `actions` commands accept semantic events from host computer-use capture or
+browser automation. A host can import the action manifest it recorded while
+driving the computer; the same source-time event can generate a callout and
+cursor-focused framing. The format is also published as
+`schemas/mega-recorder-action-manifest.schema.json`; it is JSON schema version 1
+and each action has a stable id,
+source-media `timestampSec`, concise label, and either a normalized `point`
+(`x`,`y`) or normalized `targetRect` (`x`,`y`,`width`,`height`), plus an optional
+`sceneId`. `actions import` normalizes an externally-authored manifest, and
+`actions list` returns it as the stable JSON CLI object.
+
+`actions apply` merges markers into the selected project and derives deterministic
+clip-anchored zoom framing around each action. `--callouts` additionally emits
+short local text callout annotations; no provider, API key, or network call is
+used. Existing manual zooms remain intact, and reapplying is idempotent. Action
+timestamps stay in source time while `timelineTimeSec` is recalculated after a
+ripple delete; actions inside the deleted span are dropped and generated framing
+is rebuilt. Source media and its existing `.cursor.json` telemetry sidecar are
+never rewritten.
+
+## Timed overlays and ripple alignment
+
+`edit overlay add` creates a title, label, callout, or lower-third text box.
+`--position x,y`, `--size width,height`, `--anchor`, `--space`, and style flags
+control its placement and appearance. MP4 export composites these overlays;
+the browser shows them in the overlays lane and preview. A middle cut splits
+overlapped overlays and audio tracks, shifts later pieces, and remaps action
+markers plus their generated framing/callouts so narration and focus remain in
+the same relative moments.

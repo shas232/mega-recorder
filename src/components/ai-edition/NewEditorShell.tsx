@@ -1271,6 +1271,7 @@ export function NewEditorShell() {
 									onZoomFocusChange={tl.updateZoomFocusLive}
 									onZoomFocusCommit={() => void tl.commitZoomFocus()}
 									annotationRegions={tl.annotationRegions}
+									overlays={tl.overlays}
 									selectedAnnotationId={
 										tl.selection?.kind === "annotation" ? tl.selection.id : null
 									}
@@ -1347,6 +1348,7 @@ export function NewEditorShell() {
 						variant={mode === "media" ? "media" : "edit"}
 						onDropAsset={handleDropAsset}
 						videoSources={videoSources}
+						actions={document?.actions ?? []}
 						playing={playing}
 						onTogglePlay={togglePlay}
 						onPrevClip={handlePrevClip}

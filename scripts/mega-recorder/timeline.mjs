@@ -1,4 +1,6 @@
 import fs from "node:fs/promises";
+import { applyActionsToDocument, remapActionsAfterDelete } from "./actions.mjs";
+import { remapOverlaysAfterDelete } from "./overlays.mjs";
 
 function finite(value) {
 	return typeof value === "number" && Number.isFinite(value);
@@ -32,6 +34,93 @@ function normalizeIntervals(intervals) {
 		else previous.endSec = Math.max(previous.endSec, interval.endSec);
 	}
 	return merged;
+}
+
+/** Map a primary-source cut to the old virtual timeline. A recording can be
+ * placed more than once, or reordered, so source seconds alone are not enough
+ * to decide which audio span moves; each clip is the authoritative bridge.
+ */
+function sourceCutToTimelineRanges(document, assetId, lo, hi, duration) {
+	const clips = (document.timeline?.clips ?? [])
+		.filter((clip) => clip.assetId === assetId)
+		.sort((a, b) => (a.timelineStartSec ?? 0) - (b.timelineStartSec ?? 0));
+	if (clips.length === 0) return [{ startSec: lo, endSec: hi }];
+	const ranges = clips.flatMap((clip) => {
+		const sourceStart = Math.max(0, Number(clip.sourceStartSec) || 0);
+		const sourceEnd = Math.min(
+			duration,
+			Number.isFinite(clip.sourceEndSec) ? clip.sourceEndSec : duration,
+		);
+		const overlapStart = Math.max(lo, sourceStart);
+		const overlapEnd = Math.min(hi, sourceEnd);
+		if (!(overlapEnd > overlapStart)) return [];
+		const timelineStart = Number(clip.timelineStartSec) || 0;
+		return [
+			{
+				startSec: timelineStart + overlapStart - sourceStart,
+				endSec: timelineStart + overlapEnd - sourceStart,
+			},
+		];
+	});
+	return normalizeIntervals(ranges);
+}
+
+function shiftAfterRemovals(position, removals) {
+	return removals.reduce(
+		(total, range) => total + Math.max(0, Math.min(position, range.endSec) - range.startSec),
+		0,
+	);
+}
+
+/**
+ * Remove virtual-timeline spans from attached audio, splitting a track when a
+ * cut passes through it and shifting every surviving piece left by the exact
+ * amount removed before it. Track source offsets are advanced for split pieces
+ * so the audio heard after a cut is deterministic and never restarts at 0.
+ */
+export function remapAudioTracksAfterTimelineDelete(document, removals) {
+	const tracks = document?.timeline?.audioTracks;
+	if (!Array.isArray(tracks) || tracks.length === 0 || removals.length === 0) return tracks ?? [];
+	const orderedRemovals = normalizeIntervals(removals);
+	return tracks.flatMap((track) => {
+		const start = Number(track.timelineStartSec);
+		const end = Number(track.timelineEndSec);
+		if (!finite(start) || !finite(end) || end <= start) return [];
+		let fragments = [{ startSec: start, endSec: end }];
+		for (const removed of orderedRemovals) {
+			fragments = fragments.flatMap((fragment) => {
+				if (removed.endSec <= fragment.startSec || removed.startSec >= fragment.endSec) {
+					return [fragment];
+				}
+				const pieces = [];
+				if (fragment.startSec < removed.startSec)
+					pieces.push({ startSec: fragment.startSec, endSec: removed.startSec });
+				if (removed.endSec < fragment.endSec)
+					pieces.push({ startSec: removed.endSec, endSec: fragment.endSec });
+				return pieces;
+			});
+		}
+		return fragments
+			.filter((fragment) => fragment.endSec > fragment.startSec)
+			.map((fragment, index) => {
+				const sourceDelta = fragment.startSec - start;
+				const originalSourceStart = Number(track.sourceStartSec) || 0;
+				const sourceStartSec = originalSourceStart + sourceDelta;
+				const sourceEndSec = sourceStartSec + (fragment.endSec - fragment.startSec);
+				const timelineStartSec =
+					fragment.startSec - shiftAfterRemovals(fragment.startSec, orderedRemovals);
+				const timelineEndSec =
+					fragment.endSec - shiftAfterRemovals(fragment.endSec, orderedRemovals);
+				return {
+					...track,
+					id: index === 0 ? track.id : `${track.id}_part${index + 1}`,
+					sourceStartSec,
+					sourceEndSec,
+					timelineStartSec,
+					timelineEndSec,
+				};
+			});
+	});
 }
 
 function clipId(index) {
@@ -112,26 +201,55 @@ export function deleteRangeFromDocument(document, startSec, endSec) {
 			)?.id,
 		}));
 	});
-	const next = {
+	const remappedActions = remapActionsAfterDelete(document.actions ?? [], clips, lo, hi);
+	const survivingActionIds = new Set(remappedActions.map((action) => action.id));
+	const baseNext = {
 		...document,
 		project: { ...document.project, updatedAt: new Date().toISOString() },
 		timeline: {
 			...document.timeline,
 			clips,
 			trimRanges,
+			audioTracks: remapAudioTracksAfterTimelineDelete(
+				document,
+				sourceCutToTimelineRanges(document, assetId, lo, hi, duration),
+			),
 			gaps: [],
 		},
 		// Anchored annotations/zooms from the deleted clip are no longer addressable.
 		// Unanchored legacy regions retain their raw ruler spans for the renderer's
 		// existing back-compat handling.
 		annotations: (document.annotations ?? []).filter(
-			(region) => !region.clipId || survivingClipIds.has(region.clipId),
+			(region) =>
+				(!region.clipId || survivingClipIds.has(region.clipId)) &&
+				(!region.actionId || survivingActionIds.has(region.actionId)),
 		),
 		zoomRanges: (document.zoomRanges ?? []).filter(
-			(region) => !region.clipId || survivingClipIds.has(region.clipId),
+			(region) =>
+				(!region.clipId || survivingClipIds.has(region.clipId)) &&
+				(!region.actionId || survivingActionIds.has(region.actionId)),
 		),
+		overlays: remapOverlaysAfterDelete(document.overlays ?? [], lo, hi),
+		actions: remappedActions,
 	};
-	return { document: next, changed: true, keptIntervals };
+	const hasActionCallouts = (document.annotations ?? []).some(
+		(region) => region.annotationSource === "action-callout" || region.actionId,
+	);
+	const actionResult = remappedActions.length
+		? applyActionsToDocument(
+				baseNext,
+				{ projectId: document.project?.id, assetId, actions: remappedActions },
+				{ includeCallouts: hasActionCallouts },
+			)
+		: { document: baseNext, generatedZoomCount: 0, generatedCalloutCount: 0 };
+	return {
+		document: actionResult.document,
+		changed: true,
+		keptIntervals,
+		remappedActionCount: remappedActions.length,
+		generatedZoomCount: actionResult.generatedZoomCount,
+		generatedCalloutCount: actionResult.generatedCalloutCount,
+	};
 }
 
 export async function writeDocumentAtomically(filePath, document) {

@@ -4,11 +4,16 @@ import {
 	Loader2,
 	Maximize2,
 	MessageSquare,
+	Pause,
 	Pencil,
+	Play,
 	Scissors,
 	Sparkles,
 	SplitSquareHorizontal,
+	Tag,
 	Trash2,
+	Volume2,
+	VolumeX,
 	Wand2,
 	ZoomIn,
 } from "lucide-react";
@@ -23,13 +28,13 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { fromFileUrl } from "@/components/video-editor/projectPersistence";
+import { fromFileUrl, toFileUrl } from "@/components/video-editor/projectPersistence";
 import { ZOOM_DEPTH_SCALES } from "@/components/video-editor/types";
 import { useScopedT } from "@/contexts/I18nContext";
 import { useAudioPeaks } from "@/hooks/useAudioPeaks";
 import { createId } from "@/lib/ai-edition/document/ids";
 import { setUiProbeScrubbing } from "@/lib/ai-edition/perf/uiFrameProbe";
-import type { AxcutClip } from "@/lib/ai-edition/schema";
+import type { AxcutActionMarker, AxcutAudioTrack, AxcutClip } from "@/lib/ai-edition/schema";
 import { audioGainScalar } from "@/lib/ai-edition/store/editorSettings";
 import { useProjectStore } from "@/lib/ai-edition/store/projectStore";
 import { useTimelineTranscriptGate } from "@/lib/ai-edition/store/transcriptionStore";
@@ -80,6 +85,12 @@ type TimelineApi = ReturnType<typeof useTimeline>;
 const ASSET_MIME = "application/x-axcut-asset";
 
 type ToolId = "cut" | "comment" | "speed";
+
+// Zustand's selector must return the same empty value between updates. An
+// inline `?? []` creates a new snapshot on every render while the editor tests
+// (and a not-yet-loaded browser project) have no document, which loops React's
+// external-store subscription indefinitely.
+const EMPTY_AUDIO_TRACKS: AxcutAudioTrack[] = [];
 
 // "Nice" ruler steps, from a 20th of a second up to an hour. The one that gets
 // used depends on the zoom (see rulerTicks), so the ladder has to cover both a
@@ -335,9 +346,109 @@ const ClipWaveform = memo(function ClipWaveform({
 	);
 });
 
+function audioTrackUrl(sourcePath: string): string {
+	return /^(https?|blob|data):/.test(sourcePath) ? sourcePath : toFileUrl(sourcePath);
+}
+
+const AudioTrackBlock = memo(function AudioTrackBlock({
+	track,
+	sourcePath,
+	onMute,
+	onVolume,
+}: {
+	track: AxcutAudioTrack;
+	sourcePath: string;
+	onMute: () => void;
+	onVolume: (volume: number) => void;
+}) {
+	const audioRef = useRef<HTMLAudioElement | null>(null);
+	const [playing, setPlaying] = useState(false);
+	const duration = Math.max(0, track.timelineEndSec - track.timelineStartSec);
+	const play = () => {
+		const audio = audioRef.current;
+		if (!audio) return;
+		if (playing) {
+			audio.pause();
+			setPlaying(false);
+			return;
+		}
+		// Preview the persisted source range, not the beginning of the file. This
+		// matters for narration tracks created from a trimmed Kokoro WAV.
+		audio.currentTime = Math.max(0, track.sourceStartSec);
+		audio.volume = Math.min(1, Math.max(0, track.volume));
+		void audio
+			.play()
+			.then(() => setPlaying(true))
+			.catch(() => setPlaying(false));
+	};
+	return (
+		<div
+			className={styles.tlAudioTrack}
+			title={`${track.label} · ${track.sourcePath} · ${duration.toFixed(2)}s`}
+		>
+			<audio
+				ref={audioRef}
+				src={sourcePath}
+				preload="metadata"
+				onEnded={() => setPlaying(false)}
+				onTimeUpdate={(event) => {
+					if (event.currentTarget.currentTime >= track.sourceEndSec) {
+						event.currentTarget.pause();
+						setPlaying(false);
+					}
+				}}
+				aria-hidden
+			/>
+			<button
+				type="button"
+				className={styles.tlAudioPlay}
+				aria-label={playing ? `Pause ${track.label}` : `Play ${track.label}`}
+				title={playing ? "Pause audio" : "Play audio"}
+				onClick={(event) => {
+					event.stopPropagation();
+					play();
+				}}
+			>
+				{playing ? <Pause size={11} /> : <Play size={11} />}
+			</button>
+			<div className={styles.tlAudioMeta}>
+				<strong>{track.label}</strong>
+				<span>
+					{track.kind === "narration" ? `Kokoro${track.voice ? ` · ${track.voice}` : ""}` : "Audio"}{" "}
+					· {duration.toFixed(2)}s · {track.error ?? track.status}
+				</span>
+			</div>
+			<button
+				type="button"
+				className={`${styles.tlAudioMute}${track.muted ? ` ${styles.tlAudioMuted}` : ""}`}
+				aria-label={track.muted ? `Unmute ${track.label}` : `Mute ${track.label}`}
+				title={track.muted ? "Unmute audio" : "Mute audio"}
+				onClick={(event) => {
+					event.stopPropagation();
+					onMute();
+				}}
+			>
+				{track.muted ? <VolumeX size={12} /> : <Volume2 size={12} />}
+			</button>
+			<label className={styles.tlAudioVolume} title={`Volume ${Math.round(track.volume * 100)}%`}>
+				<span className="sr-only">Volume for {track.label}</span>
+				<input
+					type="range"
+					min="0"
+					max="2"
+					step="0.01"
+					value={track.volume}
+					onChange={(event) => onVolume(Number(event.target.value))}
+					onClick={(event) => event.stopPropagation()}
+				/>
+			</label>
+		</div>
+	);
+});
+
 interface LanePill {
 	id: string;
-	kind: "annotation" | "speed" | "trim" | "zoom" | "cameraFullscreen";
+	kind: "annotation" | "overlay" | "speed" | "trim" | "zoom" | "cameraFullscreen";
 	start: number;
 	end: number;
 	label: string;
@@ -356,6 +467,7 @@ export function V4Timeline({
 	onPrevClip,
 	onNextClip,
 	onEditClip,
+	actions = [],
 }: {
 	tl: TimelineApi;
 	setCurrentTime: (sec: number) => void;
@@ -369,6 +481,8 @@ export function V4Timeline({
 	/** Opens the (now single, shell-level) EditClipModal for this clip —
 	 * trim in/out and crop both live there per-clip. */
 	onEditClip: (clip: AxcutClip) => void;
+	/** Host-agent semantic actions, persisted in source time with a derived ruler time. */
+	actions?: AxcutActionMarker[];
 }) {
 	const t = useScopedT("timeline");
 	// The camera lane borrows the Layout pane's "No Webcam" wording when there is no
@@ -433,6 +547,10 @@ export function V4Timeline({
 							: t("toolbar.smartCutsNeedsTranscript");
 
 	const clips = tl.clips;
+	const audioTracks = useProjectStore(
+		(s) => s.document?.timeline.audioTracks ?? EMPTY_AUDIO_TRACKS,
+	);
+	const saveDocument = useProjectStore((s) => s.saveDocument);
 	// A camera-fullscreen region grows the webcam overlay, so on a project with no webcam
 	// it renders nothing in the preview and nothing in the export. `addCameraFullscreen`
 	// refuses to write one (see useTimeline) — this makes the control say so before it is
@@ -444,8 +562,9 @@ export function V4Timeline({
 			Math.max(
 				1,
 				clips.reduce((m, c) => Math.max(m, c.timelineEndSec), 0),
+				audioTracks.reduce((m, track) => Math.max(m, track.timelineEndSec), 0),
 			),
-		[clips],
+		[clips, audioTracks],
 	);
 	const pctOf = useCallback((sec: number) => (sec / total) * 100, [total]);
 	const showLanes = variant === "edit";
@@ -479,6 +598,14 @@ export function V4Timeline({
 		end: p.end,
 		label: t("toolbar.newAnnotation"),
 		sourceIds: p.ids,
+	}));
+	const overlayPills: LanePill[] = (tl.overlays ?? []).map((overlay) => ({
+		id: overlay.id,
+		kind: "overlay",
+		start: overlay.startSec,
+		end: overlay.endSec,
+		label: `${overlay.type}: ${overlay.text}`,
+		sourceIds: [overlay.id],
 	}));
 	const speedPills: LanePill[] = coalesceRegionsForRuler(tl.speedRegions).map((p) => ({
 		id: p.ids[0],
@@ -522,6 +649,27 @@ export function V4Timeline({
 		label: formatSec(g.end - g.start),
 		sourceIds: g.ids,
 	}));
+	const visibleActions = [...actions]
+		.filter((action) => Number.isFinite(action.timelineTimeSec))
+		.sort((a, b) => (a.timelineTimeSec ?? 0) - (b.timelineTimeSec ?? 0));
+
+	const updateAudioTrack = useCallback(
+		(trackId: string, patch: Partial<AxcutAudioTrack>) => {
+			const current = useProjectStore.getState().document;
+			if (!current) return;
+			const next: typeof current = {
+				...current,
+				timeline: {
+					...current.timeline,
+					audioTracks: current.timeline.audioTracks.map((track) =>
+						track.id === trackId ? { ...track, ...patch } : track,
+					),
+				},
+			};
+			void saveDocument(next, { history: true });
+		},
+		[saveDocument],
+	);
 
 	// Ruler ticks are chosen from what is actually ON SCREEN, not from the clip
 	// length: the canvas is widened by 1/navSpan, so the same recording shows one
@@ -664,6 +812,7 @@ export function V4Timeline({
 		(e: ReactPointerEvent, pill: LanePill, dragMode: "move" | "l" | "r") => {
 			e.preventDefault();
 			e.stopPropagation();
+			if (pill.kind === "overlay") return;
 			tl.selectRegion(pill.kind, pill.id, { additive: e.shiftKey });
 			// Scale drag deltas against the canvas (full zoomed timeline) width, so a
 			// drag tracks the cursor exactly regardless of padding, scrollbar or zoom.
@@ -895,16 +1044,20 @@ export function V4Timeline({
 	const laneOf = (kind: LanePill["kind"]) =>
 		kind === "annotation"
 			? styles.laneAnnotation
-			: kind === "speed"
-				? styles.laneSpeed
-				: kind === "trim"
-					? styles.laneTrim
-					: kind === "cameraFullscreen"
-						? styles.laneCameraFullscreen
-						: styles.laneZoom;
+			: kind === "overlay"
+				? styles.laneOverlay
+				: kind === "speed"
+					? styles.laneSpeed
+					: kind === "trim"
+						? styles.laneTrim
+						: kind === "cameraFullscreen"
+							? styles.laneCameraFullscreen
+							: styles.laneZoom;
 	const pillIcon = (kind: LanePill["kind"]) =>
 		kind === "annotation" ? (
 			<MessageSquare size={11} />
+		) : kind === "overlay" ? (
+			<Tag size={11} />
 		) : kind === "speed" ? (
 			<Clock size={11} />
 		) : kind === "trim" ? (
@@ -1257,7 +1410,7 @@ export function V4Timeline({
 							shiftPx: shift.px,
 							immediate: shift.immediate,
 							showContent: true,
-							interactive: true,
+							interactive: p.kind !== "overlay",
 							suppressLeftSeam: false,
 							suppressRightSeam: false,
 						}),
@@ -1348,6 +1501,15 @@ export function V4Timeline({
 								{tool.icon}
 							</button>
 						))}
+						<button
+							type="button"
+							className={styles.tlToolBtn}
+							title="Add label overlay"
+							aria-label="Add label overlay"
+							onClick={() => void tl.addOverlay("label", newRegionDurationSec())}
+						>
+							<Tag size={15} />
+						</button>
 						<button
 							type="button"
 							className={styles.tlToolBtn}
@@ -1462,6 +1624,37 @@ export function V4Timeline({
 
 						{showLanes ? (
 							<>
+								<div className={styles.tlLane} aria-label="On-video overlays">
+									{renderPills(overlayPills, "Press the label button to add an overlay")}
+								</div>
+								<div className={styles.tlLane} aria-label="Host actions">
+									{visibleActions.length > 0 ? (
+										visibleActions.map((action) => {
+											const framed = tl.zoomRegions.some((region) => region.actionId === action.id);
+											return (
+												<div
+													key={action.id}
+													data-action-marker={action.id}
+													title={`${action.label}${framed ? " — automatic framing" : ""}`}
+													aria-label={`${action.label}${framed ? " — automatic framing" : ""}`}
+													style={{
+														position: "absolute",
+														left: `${pctOf(action.timelineTimeSec ?? 0)}%`,
+														top: 2,
+														bottom: 2,
+														width: 3,
+														borderRadius: 2,
+														background: framed ? "var(--accent)" : "var(--meta)",
+														boxShadow: framed ? "0 0 0 2px var(--accent-ring)" : undefined,
+														zIndex: 3,
+													}}
+												/>
+											);
+										})
+									) : (
+										<span className={styles.laneEmpty}>Host actions appear here after capture</span>
+									)}
+								</div>
 								{/* An empty lane advertises the shortcut that fills it ("Press A to add
 								    annotation") rather than restating that it is empty — the same hint
 								    strings the pre-v4 timeline used, so the keys stay translated. */}
@@ -1472,6 +1665,34 @@ export function V4Timeline({
 									{renderPills(speedPills, t("hints.pressSpeed"))}
 								</div>
 								<div className={styles.tlLane}>{renderPills(trimPills, t("hints.pressTrim"))}</div>
+								<div className={`${styles.tlLane} ${styles.tlAudioLane}`}>
+									{audioTracks.length === 0 ? (
+										<span
+											className={styles.laneEmpty}
+											style={{ left: `${nav.start * 100}%`, width: `${navSpan * 100}%` }}
+										>
+											Attach audio with <code>mega-recorder audio attach</code>
+										</span>
+									) : (
+										audioTracks.map((track) => (
+											<div
+												key={track.id}
+												className={styles.tlAudioBlock}
+												style={{
+													left: `${pctOf(track.timelineStartSec)}%`,
+													width: `${pctOf(Math.max(0.001, track.timelineEndSec - track.timelineStartSec))}%`,
+												}}
+											>
+												<AudioTrackBlock
+													track={track}
+													sourcePath={audioTrackUrl(track.sourcePath)}
+													onMute={() => updateAudioTrack(track.id, { muted: !track.muted })}
+													onVolume={(volume) => updateAudioTrack(track.id, { volume })}
+												/>
+											</div>
+										))
+									)}
+								</div>
 								<div className={styles.tlLane}>{renderPills(zoomPills, t("hints.pressZoom"))}</div>
 								<div className={styles.tlLane}>
 									{/* Advertising "Press C" on a project with no webcam invites a keystroke

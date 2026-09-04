@@ -4,6 +4,7 @@ import { useScopedT } from "@/contexts/I18nContext";
 import type {
 	AxcutAnnotationRegion,
 	AxcutClip,
+	AxcutOverlay,
 	AxcutTrimRange,
 	AxcutZoomRegion,
 } from "@/lib/ai-edition/schema";
@@ -30,6 +31,7 @@ interface PreviewProps {
 	onZoomFocusChange?: (id: string, focus: ZoomFocus) => void;
 	onZoomFocusCommit?: () => void;
 	annotationRegions?: AxcutAnnotationRegion[];
+	overlays?: AxcutOverlay[];
 	selectedAnnotationId?: string | null;
 	onSelectAnnotation?: (id: string) => void;
 	onAnnotationPositionChange?: (id: string, position: { x: number; y: number }) => void;
@@ -61,6 +63,7 @@ export function Preview({
 	onZoomFocusChange,
 	onZoomFocusCommit,
 	annotationRegions,
+	overlays,
 	selectedAnnotationId,
 	onSelectAnnotation,
 	onAnnotationPositionChange,
@@ -187,6 +190,7 @@ export function Preview({
 						onZoomFocusChange={onZoomFocusChange}
 						onZoomFocusCommit={onZoomFocusCommit}
 						annotationRegions={annotationRegions}
+						overlays={overlays}
 						selectedAnnotationId={selectedAnnotationId}
 						onSelectAnnotation={onSelectAnnotation}
 						onAnnotationPositionChange={onAnnotationPositionChange}

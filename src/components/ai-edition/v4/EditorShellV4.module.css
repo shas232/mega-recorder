@@ -1403,6 +1403,88 @@
 	border-radius: 6px;
 	background: var(--surface-1);
 }
+.tlAudioLane {
+	height: 44px;
+	background: var(--surface-1);
+}
+.tlAudioBlock {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	min-width: 1px;
+	border: 1px solid color-mix(in oklch, var(--accent) 70%, var(--border));
+	border-radius: 7px;
+	background: color-mix(in oklch, var(--accent-soft) 80%, var(--surface-1));
+	box-sizing: border-box;
+	overflow: hidden;
+}
+.tlAudioTrack {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	min-width: 0;
+	padding: 3px 5px;
+	color: var(--fg);
+}
+.tlAudioTrack audio {
+	display: none;
+}
+.tlAudioPlay,
+.tlAudioMute {
+	display: grid;
+	place-items: center;
+	width: 22px;
+	height: 22px;
+	flex: 0 0 22px;
+	padding: 0;
+	border: 1px solid var(--border-hi);
+	border-radius: 5px;
+	background: var(--surface-2);
+	color: var(--fg);
+	cursor: pointer;
+}
+.tlAudioPlay:hover,
+.tlAudioMute:hover {
+	border-color: var(--accent);
+	background: var(--accent-wash);
+}
+.tlAudioMuted {
+	color: var(--danger);
+}
+.tlAudioMeta {
+	display: flex;
+	flex: 1 1 auto;
+	min-width: 0;
+	flex-direction: column;
+	gap: 1px;
+	overflow: hidden;
+}
+.tlAudioMeta strong,
+.tlAudioMeta span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.tlAudioMeta strong {
+	font-size: 10px;
+	font-weight: 650;
+}
+.tlAudioMeta span {
+	font-size: 9px;
+	color: var(--meta);
+}
+.tlAudioVolume {
+	display: flex;
+	flex: 0 0 auto;
+	align-items: center;
+	margin-left: auto;
+}
+.tlAudioVolume input {
+	width: 56px;
+	accent-color: var(--accent);
+}
 .laneEmpty {
 	position: absolute;
 	/* left/width come from V4Timeline (the visible window, not the whole zoomed
@@ -1479,6 +1561,10 @@
 .laneAnnotation {
 	border-color: var(--annotation);
 	background: var(--annotation-wash);
+}
+.laneOverlay {
+	border-color: #f59e0b;
+	background: rgba(245, 158, 11, 0.16);
 }
 .laneSpeed {
 	border-color: var(--speed);

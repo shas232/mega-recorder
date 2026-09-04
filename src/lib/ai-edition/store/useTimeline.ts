@@ -19,7 +19,8 @@ import {
 	resequenceClips,
 	setClipSourceRange,
 } from "../document/timeline";
-import type { AxcutClipCropRegion, AxcutDocument } from "../schema";
+import { OVERLAY_PRESETS } from "../overlays";
+import type { AxcutClipCropRegion, AxcutDocument, AxcutOverlayType } from "../schema";
 import { hasAnyClipWithCamera } from "../timeline/camera";
 import { probeVideoDimensions, probeVideoDuration } from "../timeline/duration";
 import {
@@ -371,6 +372,39 @@ export function useTimeline() {
 			// churn the callback identity between renders.
 		},
 		[document, saveDocument, ts],
+	);
+
+	const addOverlay = useCallback(
+		async (type: AxcutOverlayType = "label", durationSec = DEFAULT_NEW_REGION_SEC) => {
+			if (!document) return;
+			const startSec = finiteSec(playheadSec());
+			const spanSec = Number.isFinite(durationSec)
+				? Math.max(0.001, durationSec)
+				: DEFAULT_NEW_REGION_SEC;
+			const copy = OVERLAY_PRESETS[type];
+			const text =
+				type === "title"
+					? "Section title"
+					: type === "callout"
+						? "Click here"
+						: type === "lower-third"
+							? "Speaker name"
+							: "Step label";
+			const overlay: AxcutDocument["overlays"][number] = {
+				id: createId("overlay"),
+				startSec,
+				endSec: startSec + spanSec,
+				text,
+				type,
+				...copy,
+				zIndex: document.overlays.length + 1000,
+			};
+			await saveDocument(
+				{ ...document, overlays: [...document.overlays, overlay] },
+				{ history: true },
+			);
+		},
+		[document, saveDocument],
 	);
 
 	const addSpeed = useCallback(
@@ -1177,6 +1211,7 @@ export function useTimeline() {
 		zoomRegions: document?.zoomRanges ?? [],
 		trimRanges: document?.timeline.trimRanges ?? [],
 		annotationRegions: (document?.annotations ?? []) as unknown as AnnotationRegion[],
+		overlays: document?.overlays ?? [],
 		speedRegions,
 		cameraFullscreenRegions,
 		clips: document?.timeline.clips ?? [],
@@ -1189,6 +1224,7 @@ export function useTimeline() {
 		addZoomsBulk,
 		addTrim,
 		addAnnotation,
+		addOverlay,
 		addSpeed,
 		addCameraFullscreen,
 		removeRegion,

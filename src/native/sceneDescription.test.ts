@@ -15,9 +15,10 @@ import type {
 	AxcutAsset,
 	AxcutClip,
 	AxcutDocument,
+	AxcutOverlay,
 	AxcutZoomRegion,
 } from "@/lib/ai-edition/schema";
-import { axcutSchemaVersion } from "@/lib/ai-edition/schema";
+import { axcutSchemaVersion, overlaySchema } from "@/lib/ai-edition/schema";
 import { getFocusBoundsForScale } from "@/lib/zoomMath/focusUtils";
 import { buildSceneDescription } from "./sceneDescription";
 
@@ -90,7 +91,9 @@ function makeDoc(
 			...(overrides.timeline ?? {}),
 		},
 		annotations: overrides.annotations ?? [],
+		overlays: overrides.overlays ?? [],
 		zoomRanges: overrides.zoomRanges ?? [],
+		actions: overrides.actions ?? [],
 		legacyEditor: overrides.legacyEditor ?? null,
 	};
 }
@@ -1839,6 +1842,53 @@ describe("buildSceneDescription.annotations", () => {
 			]),
 		);
 		expect(scene.annotations[0]).not.toHaveProperty("underTrim");
+	});
+});
+
+describe("buildSceneDescription.overlays", () => {
+	it("serializes authored title and callout overlays for the native compositor", () => {
+		const asset = makeAsset({ id: "asset1", originalPath: "/tmp/screen.mp4" });
+		const clip = makeClip({
+			id: "clip1",
+			assetId: asset.id,
+			sourceStartSec: 0,
+			sourceEndSec: 8,
+			timelineStartSec: 0,
+			timelineEndSec: 8,
+		});
+		const overlays: AxcutOverlay[] = [
+			overlaySchema.parse({
+				id: "title1",
+				startSec: 0.5,
+				endSec: 2,
+				type: "title",
+				text: "Start here",
+				space: "frame",
+			}),
+			overlaySchema.parse({
+				id: "callout1",
+				startSec: 3,
+				endSec: 5,
+				type: "callout",
+				text: "Click Save",
+			}),
+		];
+		const annotations = buildSceneDescription(
+			makeDoc({ assets: [asset], clips: [clip], overlays }),
+		).annotations;
+		expect(annotations).toHaveLength(2);
+		expect(annotations.map((entry) => entry.id)).toEqual(["title1", "callout1"]);
+		expect(annotations[0]).toMatchObject({
+			startSec: 0.5,
+			endSec: 2,
+			space: "frame",
+			text: { content: "Start here" },
+		});
+		expect(annotations[1]).toMatchObject({
+			startSec: 3,
+			endSec: 5,
+			text: { content: "Click Save" },
+		});
 	});
 });
 

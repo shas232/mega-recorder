@@ -1,11 +1,13 @@
 ---
 name: mega-recorder
-description: Operate the local-first MEGA RECORDER/OpenScreen workflow for recording, browser editing, local Kokoro narration, presets, verification, and export. Use when a host coding agent is asked to perform one of those workflows; do not use for unrelated video editing.
+description: Operate the local-first MEGA RECORDER/OpenScreen workflow for recording, browser editing, local Kokoro narration, overlays, host computer-use actions, presets, verification, and export. Use when a host coding agent is asked to perform one of those workflows; do not use for unrelated video editing.
 ---
 
 # MEGA Recorder
 
 This file is intentionally standalone. It is written for the host agent (Codex, Claude Code, or a compatible coding agent), which supplies reasoning plus any available browser/computer-use capability. When this file is copied by itself, do not expect companion skill files: locate or clone the product first, then use the helpers in that checkout. Execute setup and one-time commands for the user rather than handing them a manual checklist. MEGA Recorder never requests or configures a separate AI provider, API key, or hosted agent; host-agent intelligence is outside the product.
+
+The editor supports a visible narration/audio lane, timed title/label/callout/lower-third text boxes with frame/screen positioning and style, and host-agent action markers that can derive callouts plus deterministic cursor-focused framing. Ripple cuts keep clips, audio, overlays, actions, annotations, and zooms aligned together.
 
 ### Placement
 
@@ -17,7 +19,7 @@ The shared artifact remains this one `SKILL.md`; `agents/openai.yaml` and the he
 ## Product source and bootstrap
 
 - Canonical repository: `https://github.com/shas232/mega-recorder.git`
-- Pinned release: `v0.2.0` (use this tag unless the user explicitly requests another ref)
+- Pinned release: `v0.3.0` (use this tag unless the user explicitly requests another ref)
 - Per-user default checkout: `${MEGA_RECORDER_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/mega-recorder}/openscreen`
 
 1. Locate a valid existing checkout from `MEGA_RECORDER_HOME`, a configured product path, the current directory/ancestors, or generic home-relative locations. A valid checkout has `package.json` and `scripts/mega-recorder-cli.mjs`.
@@ -26,11 +28,11 @@ The shared artifact remains this one `SKILL.md`; `agents/openai.yaml` and the he
    ```sh
    MEGA_RECORDER_ROOT="${MEGA_RECORDER_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/mega-recorder}"
    mkdir -p "$MEGA_RECORDER_ROOT"
-   git clone --branch v0.2.0 --depth 1 https://github.com/shas232/mega-recorder.git "$MEGA_RECORDER_ROOT/openscreen"
+   git clone --branch v0.3.0 --depth 1 https://github.com/shas232/mega-recorder.git "$MEGA_RECORDER_ROOT/openscreen"
    ```
 
    Never clone over an existing directory or choose an arbitrary user path. Set `REPO` to the resolved checkout for all later commands.
-3. Run the checkout's `skills/mega-recorder/scripts/bootstrap.py --repo "$REPO" --ref v0.2.0 --no-bootstrap --json` to validate discovery. On first use, or whenever the checkout has no usable Node runtime, run `npm ci` in `REPO`; verify that `node_modules/.bin/electron` and the Electron distribution under `node_modules/electron/dist` exist, then run `npm rebuild electron --force` if the runtime is missing or corrupt. Build the app runtime with `npm run build-vite` when `dist/` or `dist-electron/` is absent. Run `doctor.py --repo "$REPO" --json` after setup and before native capture/export. Treat doctor output as evidence, not proof that recording or export succeeded.
+3. Run the checkout's `skills/mega-recorder/scripts/bootstrap.py --repo "$REPO" --ref v0.3.0 --no-bootstrap --json` to validate discovery. On first use, or whenever the checkout has no usable Node runtime, run `npm ci` in `REPO`; verify that `node_modules/.bin/electron` and the Electron distribution under `node_modules/electron/dist` exist, then run `npm rebuild electron --force` if the runtime is missing or corrupt. Build the app runtime with `npm run build-vite` when `dist/` or `dist-electron/` is absent. Run `doctor.py --repo "$REPO" --json` after setup and before native capture/export. Treat doctor output as evidence, not proof that recording or export succeeded.
 4. Before every `record` or `export` on macOS, install the native payloads from the pinned upstream release with `python3 "$REPO/skills/mega-recorder/scripts/native_setup.py" --repo "$REPO" --ensure --json`, then rerun `doctor.py`. The helper detects arm64/x64, verifies the official archive SHA-256, extracts only the required signed ScreenCaptureKit/compositor/FFmpeg files into the checkout, and never reads `/Applications/Openscreen.app`. If the host is not a supported macOS architecture, leave native capture/export unverified and report the structured error.
 
 The repository contains the deterministic helpers and product assets needed after cloning: `bootstrap.py`, `doctor.py`, `kokoro_setup.py`, `install_skill.py`, `smoke.py`, and the bundled upstream-to-product patch. Do not require those files before the initial clone.
@@ -38,9 +40,9 @@ The repository contains the deterministic helpers and product assets needed afte
 ## Route the request
 
 - Inspection, presets, and verification use the existing CLI: `node "$REPO/scripts/mega-recorder-cli.mjs" <command>`. Preserve its stable JSON output.
-- Browser editing uses `node "$REPO/scripts/mega-recorder-cli.mjs" edit <project>`. Build with `npm run build-vite` when the checkout has no current `dist/`, then open the printed loopback URL in the browser tool. The server is disposable, token-authenticated, loopback-only, and project-scoped. Implemented browser scope is project inspection, existing timeline/trim editing, save, and non-interactive middle cut/ripple-delete via `edit delete`; verify the persisted project readback. Stop the server after the task.
+- Browser editing uses `node "$REPO/scripts/mega-recorder-cli.mjs" edit <project>`. Build with `npm run build-vite` when the checkout has no current `dist/`, then open the printed loopback URL in the browser tool. The server is disposable, token-authenticated, loopback-only, and project-scoped. The browser timeline visibly exposes video, audio/narration, overlays, host actions, annotations, speed, trims, zooms, camera, and playback controls; it has no BYO AI/provider configuration. Verify the persisted project readback after edits and stop the server after the task.
 - Local narration uses Kokoro only for TTS. Before narration, run `kokoro doctor`; if it is not ready, automatically run `python3 "$REPO/skills/mega-recorder/scripts/kokoro_setup.py" --repo "$REPO" --json --ensure`, rerun `kokoro doctor`, and synthesize with a voice reported by that fresh doctor result. Model download/setup may use the network; narration text and synthesis stay local. Never configure or request a cloud TTS or other AI provider/API key.
-- Native `record` and `export` remain upstream Electron/native compatibility surfaces. Run doctor first, install/verify the pinned payloads on supported macOS hosts, perform them only when explicitly requested and supported, and report them as unverified or blocked unless the requested artifact and a fresh verification exist. The CLI drives a hidden Electron runner window; do not open a visible Electron desktop app, add Remotion, or fake unsupported editor panels.
+- Native `record` and `export` remain upstream Electron/native compatibility surfaces. Run doctor first, install/verify the pinned payloads on supported macOS hosts, perform them only when explicitly requested and supported, and report them as unverified or blocked unless the requested artifact and a fresh verification exist. Native MP4 export burns the persisted overlays/framing and mixes unmuted local audio/narration tracks; GIF export has no audio stream. The CLI drives a hidden Electron runner window; do not open a visible Electron desktop app, add Remotion, or fake unsupported editor panels.
 
 ## Safety and handoff
 

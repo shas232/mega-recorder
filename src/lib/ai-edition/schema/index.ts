@@ -229,6 +229,40 @@ export const rangeSchema = endGteStart(
 	"startSec",
 );
 
+/**
+ * An audio file placed on the edited (virtual) timeline. Audio is deliberately
+ * a timeline child rather than a video asset: Kokoro narration and imported
+ * beds are not video clips, but they still need a durable path, source range,
+ * timeline range and mix controls. The path is rewritten to a scoped media URL
+ * by the browser editor bridge and restored to its canonical path on save.
+ */
+export const audioTrackSchema = z
+	.object({
+		id: z.string().min(1),
+		kind: z.enum(["audio", "narration"]).default("audio"),
+		label: z.string().min(1),
+		sourcePath: z.string().min(1),
+		voice: z.string().min(1).optional(),
+		sourceStartSec: z.number().nonnegative().default(0),
+		sourceEndSec: z.number().nonnegative(),
+		timelineStartSec: z.number().nonnegative().default(0),
+		timelineEndSec: z.number().nonnegative(),
+		volume: z.number().min(0).max(2).default(1),
+		muted: z.boolean().default(false),
+		status: z.enum(["ready", "missing", "error"]).default("ready"),
+		error: z.string().optional(),
+	})
+	.refine((data) => data.sourceEndSec >= data.sourceStartSec, {
+		message: "sourceEndSec must be greater than or equal to sourceStartSec",
+		path: ["sourceEndSec"],
+	})
+	.refine((data) => data.timelineEndSec >= data.timelineStartSec, {
+		message: "timelineEndSec must be greater than or equal to timelineStartSec",
+		path: ["timelineEndSec"],
+	});
+
+export const audioMixModeSchema = z.enum(["mix", "replace"]);
+
 // ponytail: trimRanges reference asset source-time (not timeline). trimRegions
 // in v2 are the inverse — a skip = the region inside the source we DON'T keep.
 //
@@ -272,6 +306,8 @@ export const timelineSchema = z.preprocess(
 		muteRanges: z.array(rangeSchema).default([]),
 		speedRanges: z.array(rangeSchema).default([]),
 		captionRanges: z.array(rangeSchema).default([]),
+		audioTracks: z.array(audioTrackSchema).default([]),
+		audioMixMode: audioMixModeSchema.default("mix"),
 	}),
 );
 
@@ -416,6 +452,30 @@ const clipAnchorShape = {
 	sourceEndSec: z.number().nonnegative().optional(),
 };
 
+// Host-agent/computer-use actions are source-time markers. `timelineTimeSec` is
+// a derived cache, so ripple edits can remap it without rewriting the original
+// timestamp or the recorded cursor sidecar.
+export const actionMarkerSchema = z
+	.object({
+		id: z.string().min(1),
+		timestampSec: z.number().nonnegative(),
+		label: z.string().min(1).max(160),
+		point: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).optional(),
+		targetRect: z
+			.object({
+				x: z.number().min(0).max(1),
+				y: z.number().min(0).max(1),
+				width: z.number().positive().max(1),
+				height: z.number().positive().max(1),
+			})
+			.optional(),
+		sceneId: z.string().max(160).optional(),
+		timelineTimeSec: z.number().nonnegative().optional(),
+	})
+	.refine((value) => value.point !== undefined || value.targetRect !== undefined, {
+		message: "action requires point or targetRect",
+	});
+
 export const annotationRegionSchema = endGteStart(
 	z.object({
 		id: z.string().min(1),
@@ -436,12 +496,79 @@ export const annotationRegionSchema = endGteStart(
 		}),
 		style: annotationStyleSchema,
 		zIndex: z.number().int().nonnegative(),
-		annotationSource: z.literal("auto-caption").optional(),
+		actionId: z.string().min(1).optional(),
+		annotationSource: z.enum(["auto-caption", "action-callout"]).optional(),
 		figureData: figureDataSchema,
 		blurData: blurDataSchema,
 	}),
 	"endMs",
 	"startMs",
+);
+
+/**
+ * A concise, authored on-video overlay. Unlike captions and the older free-form
+ * annotation collection, overlays are part of the product-facing timeline model:
+ * their times are virtual timeline seconds and their anchor point is explicit.
+ * Keeping this as a separate collection means a future caption pass can never
+ * accidentally rewrite a user's step label.
+ */
+export const overlayTypeSchema = z.enum(["title", "label", "callout", "lower-third"]);
+export const overlayAnchorSchema = z.enum([
+	"top-left",
+	"top-center",
+	"top-right",
+	"center-left",
+	"center",
+	"center-right",
+	"bottom-left",
+	"bottom-center",
+	"bottom-right",
+]);
+const overlayStyleSchema = z.object({
+	color: z.string().default("#ffffff"),
+	backgroundColor: z.string().default("rgba(17, 24, 39, 0.9)"),
+	fontSize: z.number().positive().default(32),
+	fontFamily: z.string().default("Inter"),
+	fontWeight: z.enum(["normal", "bold"]).default("bold"),
+	fontStyle: z.enum(["normal", "italic"]).default("normal"),
+	textAlign: z.enum(["left", "center", "right"]).default("left"),
+	borderRadius: z.number().nonnegative().default(12),
+	padding: z.number().nonnegative().default(12),
+	opacity: z.number().min(0).max(1).default(1),
+});
+
+export const overlaySchema = endGteStart(
+	z.object({
+		id: z.string().min(1),
+		startSec: z.number().nonnegative(),
+		endSec: z.number().nonnegative(),
+		text: z.string().trim().min(1),
+		type: overlayTypeSchema.default("label"),
+		position: z
+			.object({ x: z.number().min(0).max(100), y: z.number().min(0).max(100) })
+			.default({ x: 50, y: 50 }),
+		anchor: overlayAnchorSchema.default("center"),
+		size: z
+			.object({ width: z.number().positive().max(100), height: z.number().positive().max(100) })
+			.default({ width: 60, height: 14 }),
+		/** `screen` follows the composed screen card; `frame` pins to the output canvas. */
+		space: z.enum(["screen", "frame"]).default("screen"),
+		style: overlayStyleSchema.default({
+			color: "#ffffff",
+			backgroundColor: "rgba(17, 24, 39, 0.9)",
+			fontSize: 32,
+			fontFamily: "Inter",
+			fontWeight: "bold",
+			fontStyle: "normal",
+			textAlign: "left",
+			borderRadius: 12,
+			padding: 12,
+			opacity: 1,
+		}),
+		zIndex: z.number().int().nonnegative().default(1000),
+	}),
+	"endSec",
+	"startSec",
 );
 
 export const zoomRegionSchema = endGteStart(
@@ -466,6 +593,7 @@ export const zoomRegionSchema = endGteStart(
 		rotationPreset: z.enum(["iso", "left", "right"]).optional(),
 		customScale: z.number().positive().optional(),
 		source: z.enum(["auto", "manual"]).optional(),
+		actionId: z.string().min(1).optional(),
 	}),
 	"endMs",
 	"startMs",
@@ -500,9 +628,13 @@ const documentSchemaShape = z.object({
 		muteRanges: [],
 		speedRanges: [],
 		captionRanges: [],
+		audioTracks: [],
+		audioMixMode: "mix",
 	}),
 	annotations: z.array(annotationRegionSchema).default([]),
+	overlays: z.array(overlaySchema).default([]),
 	zoomRanges: z.array(zoomRegionSchema).default([]),
+	actions: z.array(actionMarkerSchema).default([]),
 	legacyEditor: legacyEditorSchema.nullable().default(null),
 });
 
@@ -937,10 +1069,15 @@ export type AxcutClip = z.infer<typeof clipSchema>;
 export type AxcutClipCropRegion = z.infer<typeof clipCropRegionSchema>;
 export type AxcutGap = z.infer<typeof gapSchema>;
 export type AxcutTrimRange = z.infer<typeof trimRangeSchema>;
+export type AxcutAudioTrack = z.infer<typeof audioTrackSchema>;
 export type AxcutTimeline = z.infer<typeof timelineSchema>;
 export type AxcutTimelineOperation = z.infer<typeof timelineOperationSchema>;
 export type AxcutAnnotationRegion = z.infer<typeof annotationRegionSchema>;
+export type AxcutOverlay = z.infer<typeof overlaySchema>;
+export type AxcutOverlayType = z.infer<typeof overlayTypeSchema>;
+export type AxcutOverlayAnchor = z.infer<typeof overlayAnchorSchema>;
 export type AxcutZoomRegion = z.infer<typeof zoomRegionSchema>;
+export type AxcutActionMarker = z.infer<typeof actionMarkerSchema>;
 export type AxcutCameraTrack = z.infer<typeof cameraTrackSchema>;
 export type AxcutLegacyEditor = z.infer<typeof legacyEditorSchema>;
 export type AxcutDocument = z.infer<typeof documentSchema>;
@@ -974,9 +1111,13 @@ export function createEmptyDocument(
 			muteRanges: [],
 			speedRanges: [],
 			captionRanges: [],
+			audioTracks: [],
+			audioMixMode: "mix",
 		},
 		annotations: [],
+		overlays: [],
 		zoomRanges: [],
+		actions: [],
 		legacyEditor: null,
 	});
 }

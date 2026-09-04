@@ -129,6 +129,28 @@ export function migrateProjectDataToAxcutDocument(
 	const annotationRegions: AnnotationRegion[] = Array.isArray(input.editor?.annotationRegions)
 		? input.editor.annotationRegions
 		: [];
+	// `audio attach` can enrich a legacy v2 project before it has been opened in
+	// the Axcut editor. Keep that track list in the legacy envelope at rest, then
+	// promote it into the first-class Axcut timeline on migration. The fallback
+	// through editor.audioTracks supports hand-authored older projects without
+	// changing the public v2 editor shape.
+	const legacyInput = input as EditorProjectData & {
+		audioTracks?: unknown;
+		audioMixMode?: unknown;
+	};
+	const legacyEditorInput = input.editor as ProjectEditorState & {
+		audioTracks?: unknown;
+		audioMixMode?: unknown;
+	};
+	const audioTracks = Array.isArray(legacyInput.audioTracks)
+		? legacyInput.audioTracks
+		: Array.isArray(legacyEditorInput.audioTracks)
+			? legacyEditorInput.audioTracks
+			: [];
+	const audioMixMode =
+		legacyInput.audioMixMode === "replace" || legacyEditorInput.audioMixMode === "replace"
+			? ("replace" as const)
+			: ("mix" as const);
 
 	const clip = primaryAssetId
 		? {
@@ -193,6 +215,7 @@ export function migrateProjectDataToAxcutDocument(
 			...(region.rotationPreset ? { rotationPreset: region.rotationPreset } : {}),
 			...(typeof region.customScale === "number" ? { customScale: region.customScale } : {}),
 			...(region.source === "auto" || region.source === "manual" ? { source: region.source } : {}),
+			...(typeof region.actionId === "string" ? { actionId: region.actionId } : {}),
 		}));
 
 	const migratedAnnotations: AxcutAnnotationRegion[] = annotationRegions
@@ -211,7 +234,10 @@ export function migrateProjectDataToAxcutDocument(
 			zIndex: region.zIndex,
 			...(region.annotationSource === "auto-caption"
 				? { annotationSource: "auto-caption" as const }
-				: {}),
+				: region.annotationSource === "action-callout"
+					? { annotationSource: "action-callout" as const }
+					: {}),
+			...(typeof region.actionId === "string" ? { actionId: region.actionId } : {}),
 			...(region.figureData ? { figureData: region.figureData } : {}),
 			...(region.blurData ? { blurData: region.blurData } : {}),
 		}));
@@ -244,6 +270,8 @@ export function migrateProjectDataToAxcutDocument(
 			muteRanges: [],
 			speedRanges,
 			captionRanges: [],
+			audioTracks,
+			audioMixMode,
 		},
 		annotations: migratedAnnotations,
 		zoomRanges: migratedZoomRanges,
@@ -328,6 +356,7 @@ export function migrateAxcutDocumentToProjectData(input: AxcutDocument): EditorP
 		...(region.rotationPreset ? { rotationPreset: region.rotationPreset } : {}),
 		...(typeof region.customScale === "number" ? { customScale: region.customScale } : {}),
 		...(region.source ? { source: region.source } : {}),
+		...(region.actionId ? { actionId: region.actionId } : {}),
 	}));
 	editor.zoomRegions = reverseZoomRegions;
 
@@ -345,6 +374,7 @@ export function migrateAxcutDocumentToProjectData(input: AxcutDocument): EditorP
 			style: region.style,
 			zIndex: region.zIndex,
 			...(region.annotationSource ? { annotationSource: region.annotationSource } : {}),
+			...(region.actionId ? { actionId: region.actionId } : {}),
 			...(region.figureData ? { figureData: region.figureData } : {}),
 			...(region.blurData ? { blurData: region.blurData } : {}),
 		}),

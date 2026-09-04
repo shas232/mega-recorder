@@ -35,6 +35,7 @@ import { resolveAspectRatioValue } from "@/lib/ai-edition/document/outputFormat"
 import type {
 	AxcutAnnotationRegion,
 	AxcutClip,
+	AxcutOverlay,
 	AxcutTrimRange,
 	AxcutZoomRegion,
 } from "@/lib/ai-edition/schema";
@@ -57,6 +58,7 @@ import { clamp, clamp01 } from "@/utils/math";
 import { AnnotationLayer } from "./AnnotationLayer";
 import { NativeCompositorOverlay } from "./NativeCompositorOverlay";
 import styles from "./NewEditorShell.module.css";
+import { OverlayLayer } from "./OverlayLayer";
 import { type VideoSource, VirtualPreview } from "./VirtualPreview";
 import { WebcamOverlay } from "./WebcamOverlay";
 import { ZoomFocusOverlay } from "./ZoomFocusOverlay";
@@ -74,6 +76,7 @@ interface PreviewCanvasProps {
 	onZoomFocusChange?: (id: string, focus: ZoomFocus) => void;
 	onZoomFocusCommit?: () => void;
 	annotationRegions?: AxcutAnnotationRegion[];
+	overlays?: AxcutOverlay[];
 	selectedAnnotationId?: string | null;
 	onSelectAnnotation?: (id: string) => void;
 	onAnnotationPositionChange?: (id: string, position: { x: number; y: number }) => void;
@@ -411,6 +414,15 @@ export function PreviewCanvas(props: PreviewCanvasProps) {
 			    hitbox) still render on top as normal DOM so they stay clickable. No more
 			    dual preview path. */}
 			{hostedBrowserEditor ? null : <NativeCompositorOverlay />}
+			{hostedBrowserEditor && props.overlays?.length ? (
+				<OverlayLayer
+					overlays={props.overlays}
+					currentTimeSec={props.currentTimeSec}
+					frameWidth={frameSize.width}
+					frameHeight={frameSize.height}
+					screenRect={layout?.screenRect ?? null}
+				/>
+			) : null}
 			{layout?.screenRect ? (
 				<div className={styles.screenStage} style={screenStyle}>
 					{(() => {

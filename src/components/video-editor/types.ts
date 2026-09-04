@@ -109,6 +109,8 @@ export interface ZoomRegion {
 	/** Custom scale overriding the preset depth (1.0-5.0, two decimal precision). */
 	customScale?: number;
 	source?: ZoomRegionSource;
+	/** Host-agent semantic action that deterministically generated this framing. */
+	actionId?: string;
 }
 
 export function getRotation3D(region: Pick<ZoomRegion, "rotationPreset">): Rotation3D {
@@ -339,8 +341,10 @@ export interface AnnotationRegion {
 	size: AnnotationSize;
 	style: AnnotationTextStyle;
 	zIndex: number;
+	/** Host-agent semantic action that generated this callout. */
+	actionId?: string;
 	/** When set, layout/style edits on one region can sync to all auto-caption siblings. */
-	annotationSource?: "auto-caption";
+	annotationSource?: "auto-caption" | "action-callout";
 	figureData?: FigureData;
 	blurData?: BlurData;
 }

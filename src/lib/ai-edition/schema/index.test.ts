@@ -3,12 +3,14 @@ import { migrateRawDocumentToCurrent } from "../document/migrate";
 import {
 	annotationRegionSchema,
 	assetSchema,
+	audioTrackSchema,
 	axcutSchemaVersion,
 	clipSchema,
 	createEmptyDocument,
 	documentSchema,
 	ensureDocument,
 	legacyEditorSchema,
+	overlaySchema,
 	rangeSchema,
 	timelineSchema,
 	trimRangeSchema,
@@ -39,6 +41,7 @@ describe("axcut-schema v7", () => {
 		expect(doc.timeline.muteRanges).toEqual([]);
 		expect(doc.timeline.captionRanges).toEqual([]);
 		expect(doc.annotations).toEqual([]);
+		expect(doc.overlays).toEqual([]);
 		expect(doc.zoomRanges).toEqual([]);
 		expect(doc.transcripts).toEqual([]);
 		expect(doc.legacyEditor).toBeNull();
@@ -106,6 +109,28 @@ describe("axcut-schema v7", () => {
 		expect(t.trimRanges).toEqual([]);
 		expect(t.muteRanges).toEqual([]);
 		expect(t.captionRanges).toEqual([]);
+		expect(t.audioTracks).toEqual([]);
+		expect(t.audioMixMode).toBe("mix");
+	});
+
+	it("audioTrackSchema persists source/timeline ranges and defaults controls", () => {
+		const track = audioTrackSchema.parse({
+			id: "audio_1",
+			label: "Narration",
+			sourcePath: "/tmp/narration.wav",
+			sourceEndSec: 4.25,
+			timelineEndSec: 7,
+		});
+		expect(track.kind).toBe("audio");
+		expect(track.sourceStartSec).toBe(0);
+		expect(track.timelineStartSec).toBe(0);
+		expect(track.volume).toBe(1);
+		expect(track.muted).toBe(false);
+		expect(track.status).toBe("ready");
+		expect(() => audioTrackSchema.parse({ ...track, timelineEndSec: -1 })).toThrow();
+		expect(() =>
+			audioTrackSchema.parse({ ...track, sourceEndSec: 0, sourceStartSec: 1 }),
+		).toThrow();
 	});
 
 	it("timelineSchema migrates legacy skipRanges → trimRanges", () => {
@@ -143,6 +168,23 @@ describe("axcut-schema v7", () => {
 		});
 		expect(region.type).toBe("text");
 		expect(region.annotationSource).toBeUndefined();
+	});
+
+	it("validates and defaults authored overlay labels", () => {
+		const overlay = overlaySchema.parse({
+			id: "overlay_1",
+			startSec: 2,
+			endSec: 4.5,
+			text: "Click Save",
+			type: "callout",
+			position: { x: 88, y: 55 },
+			anchor: "center-right",
+		});
+		expect(overlay.style.backgroundColor).toBe("rgba(17, 24, 39, 0.9)");
+		expect(overlay.size).toEqual({ width: 60, height: 14 });
+		expect(overlay.space).toBe("screen");
+		expect(() => overlaySchema.parse({ ...overlay, endSec: 1 })).toThrow();
+		expect(() => overlaySchema.parse({ ...overlay, type: "captions" })).toThrow();
 	});
 
 	it("keeps the remembered background colour through a save-path parse", () => {

@@ -31,6 +31,7 @@ import {
 import { createId } from "@/lib/ai-edition/document/ids";
 import { pickOutputDims } from "@/lib/ai-edition/document/outputFormat";
 import { resolvePlaybackSegments } from "@/lib/ai-edition/document/timeline";
+import { overlayAsAnnotation } from "@/lib/ai-edition/overlays";
 import type { AxcutClip, AxcutDocument } from "@/lib/ai-edition/schema";
 import { getEditorSettings } from "@/lib/ai-edition/store/editorSettings";
 import { assetCameraSource } from "@/lib/ai-edition/timeline/camera";
@@ -584,6 +585,7 @@ export function buildSceneDescription(
 		[
 			...(document.annotations ?? []),
 			...(captionRegions as unknown as NonNullable<AxcutDocument["annotations"]>),
+			...(document.overlays ?? []).map(overlayAsAnnotation),
 		],
 		visibleClips,
 		document.timeline.clips,
