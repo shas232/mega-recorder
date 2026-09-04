@@ -129,6 +129,40 @@ async function openShellModal() {
 }
 
 describe("NewEditorShell shortcuts, with a dialog over the editor", () => {
+	it("keeps browser mode focused on local editing without AI-provider surfaces", () => {
+		const previousUrl = window.location.href;
+		window.history.replaceState(
+			{},
+			"",
+			"/?windowType=editor&browser=1&megaRecorderToken=browser-test-token",
+		);
+		try {
+			renderShell();
+
+			expect(screen.queryByText("chat.welcome.title")).not.toBeInTheDocument();
+			expect(screen.queryByText("chat.welcome.cta")).not.toBeInTheDocument();
+			expect(screen.queryByText("chat.welcome.disclaimer")).not.toBeInTheDocument();
+			expect(screen.queryByRole("button", { name: "chat.aiSettings" })).not.toBeInTheDocument();
+			expect(
+				screen.queryByRole("button", { name: "topbar.toggleChatPanel" }),
+			).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole("button", { name: /OpenScreen/ }));
+			expect(
+				screen.queryByRole("menuitem", { name: "providerSettings.title" }),
+			).not.toBeInTheDocument();
+
+			expect(screen.getByRole("toolbar", { name: "toolbar.timelineTools" })).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "buttons.addTrim" })).toBeInTheDocument();
+			expect(screen.getByRole("tab", { name: "topbar.modes.edit" })).toHaveAttribute(
+				"aria-selected",
+				"true",
+			);
+		} finally {
+			window.history.replaceState({}, "", previousUrl);
+		}
+	});
+
 	it("routes ? to the shortcuts dialog while nothing is open", () => {
 		renderShell();
 

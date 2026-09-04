@@ -1093,7 +1093,8 @@ export function NewEditorShell() {
 
 	const showTimeline = mode !== "rec";
 	const timelineRow = mode === "media" ? "188px" : `${timelineHeightPx}px`;
-	const bodyColumns = mode === "edit" && chatOpen ? `${chatWidthPx}px 1fr` : "1fr";
+	const bodyColumns =
+		mode === "edit" && chatOpen && !hostedBrowserEditor ? `${chatWidthPx}px 1fr` : "1fr";
 
 	// Drag the chat/stage divider (col-resize) or the timeline's top edge
 	// (row-resize) to resize. Pointer-driven like V4Timeline's pill/nav/clip
@@ -1209,12 +1210,12 @@ export function NewEditorShell() {
 					}}
 				>
 					Browser editor: timeline edits and inspection are available. Native compositor, camera
-					playback, AI providers, and export are desktop-only.
+					playback, and export are desktop-only.
 				</div>
 			) : null}
 
 			<div className={v4.body} style={{ gridTemplateColumns: bodyColumns }}>
-				{mode === "edit" && chatOpen ? (
+				{mode === "edit" && chatOpen && !hostedBrowserEditor ? (
 					<>
 						<aside className={v4.agent} aria-label={te("shell.aiEditor")}>
 							<ChatStripPanel />

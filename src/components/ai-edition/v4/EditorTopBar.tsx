@@ -62,11 +62,14 @@ export function EditorTopBar({
 }: EditorTopBarProps) {
 	const { theme, toggle: toggleTheme } = useTheme();
 	const t = useScopedT("editor");
+	const hostedBrowserEditor =
+		typeof window !== "undefined" &&
+		new URLSearchParams(window.location.search).has("megaRecorderToken");
 
 	// ponytail: the left side panel only renders in "edit" mode (see
 	// NewEditorShell body), so its toggle is meaningless in Media/Rec —
 	// hide the button (and its separator) there to keep the topbar honest.
-	const showChatToggle = mode === "edit";
+	const showChatToggle = mode === "edit" && !hostedBrowserEditor;
 	return (
 		<header className={styles.topbar}>
 			{/* Fixed-width slot: the toggle is Edit-only, and .topbarLead holds its
@@ -88,7 +91,7 @@ export function EditorTopBar({
 					</>
 				) : null}
 			</span>
-			<AppMenu actions={actions} />
+			<AppMenu actions={actions} showProviderSettings={!hostedBrowserEditor} />
 			<span className={styles.sep} aria-hidden />
 			<ProjectNameField title={projectTitle} onRename={actions.renameProject} />
 			<span className={styles.sep} aria-hidden />
@@ -286,7 +289,13 @@ async function readUpdateVeto(cancelled: () => boolean, apply: (allowed: boolean
 	}
 }
 
-function AppMenu({ actions }: { actions: TopBarActions }) {
+function AppMenu({
+	actions,
+	showProviderSettings,
+}: {
+	actions: TopBarActions;
+	showProviderSettings: boolean;
+}) {
 	const tCommon = useScopedT("common");
 	const tEditor = useScopedT("editor");
 	const tShortcuts = useScopedT("shortcuts");
@@ -407,15 +416,17 @@ function AppMenu({ actions }: { actions: TopBarActions }) {
 					    title of the dialog they open, so neither can drift from it — and unlike the AI
 					    panel's own entry points, this one is reachable in Media and Rec too, which is
 					    the whole reason the dialog's open state was lifted out of LeftPanel (#420). */}
-					<button
-						type="button"
-						role="menuitem"
-						className={styles.appMenuRow}
-						onClick={run(actions.openProviderSettings)}
-					>
-						<Sparkles size={15} />
-						{tEditor("providerSettings.title")}
-					</button>
+					{showProviderSettings ? (
+						<button
+							type="button"
+							role="menuitem"
+							className={styles.appMenuRow}
+							onClick={run(actions.openProviderSettings)}
+						>
+							<Sparkles size={15} />
+							{tEditor("providerSettings.title")}
+						</button>
+					) : null}
 					<div className={styles.appMenuSep} aria-hidden />
 					{/* Only the PERMANENT half of the veto is applied here. A Store/Flathub/Snap/Nix
 					    copy never offers the check at all; the transient half — not during a take —
