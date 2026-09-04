@@ -1,16 +1,23 @@
 ---
 name: mega-recorder
-description: Operate the local-first MEGA RECORDER/OpenScreen workflow for recording, browser editing, local Kokoro narration, presets, verification, and export. Use when the user asks Codex to perform one of those workflows; do not use for unrelated video editing.
+description: Operate the local-first MEGA RECORDER/OpenScreen workflow for recording, browser editing, local Kokoro narration, presets, verification, and export. Use when a host coding agent is asked to perform one of those workflows; do not use for unrelated video editing.
 ---
 
 # MEGA Recorder
 
-This file is intentionally standalone. When it is copied by itself, do not expect companion skill files: locate or clone the product first, then use the helpers in that checkout. Execute setup and one-time commands for the user rather than handing them a manual checklist.
+This file is intentionally standalone. It is written for the host agent (Codex, Claude Code, or a compatible coding agent), which supplies reasoning plus any available browser/computer-use capability. When this file is copied by itself, do not expect companion skill files: locate or clone the product first, then use the helpers in that checkout. Execute setup and one-time commands for the user rather than handing them a manual checklist. MEGA Recorder never requests or configures a separate AI provider, API key, or hosted agent; host-agent intelligence is outside the product.
+
+### Placement
+
+- Codex: place this file at `~/.codex/skills/mega-recorder/SKILL.md` and invoke `$mega-recorder` or describe the requested workflow.
+- Claude Code: place this file at `.claude/skills/mega-recorder/SKILL.md` (project or user scope) and invoke the skill using the host's normal skill command.
+
+The shared artifact remains this one `SKILL.md`; `agents/openai.yaml` and the helper scripts are optional repository resources, not prerequisites for bootstrapping.
 
 ## Product source and bootstrap
 
 - Canonical repository: `https://github.com/shas232/mega-recorder.git`
-- Pinned release: `v0.1.3` (use this tag unless the user explicitly requests another ref)
+- Pinned release: `v0.1.4` (use this tag unless the user explicitly requests another ref)
 - Per-user default checkout: `${MEGA_RECORDER_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/mega-recorder}/openscreen`
 
 1. Locate a valid existing checkout from `MEGA_RECORDER_HOME`, a configured product path, the current directory/ancestors, or generic home-relative locations. A valid checkout has `package.json` and `scripts/mega-recorder-cli.mjs`.
@@ -19,7 +26,7 @@ This file is intentionally standalone. When it is copied by itself, do not expec
    ```sh
    MEGA_RECORDER_ROOT="${MEGA_RECORDER_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/mega-recorder}"
    mkdir -p "$MEGA_RECORDER_ROOT"
-   git clone --branch v0.1.3 --depth 1 https://github.com/shas232/mega-recorder.git "$MEGA_RECORDER_ROOT/openscreen"
+   git clone --branch v0.1.4 --depth 1 https://github.com/shas232/mega-recorder.git "$MEGA_RECORDER_ROOT/openscreen"
    ```
 
    Never clone over an existing directory or choose an arbitrary user path. Set `REPO` to the resolved checkout for all later commands.
@@ -31,7 +38,7 @@ The repository contains the deterministic helpers and product assets needed afte
 
 - Inspection, presets, and verification use the existing CLI: `node "$REPO/scripts/mega-recorder-cli.mjs" <command>`. Preserve its stable JSON output.
 - Browser editing uses `node "$REPO/scripts/mega-recorder-cli.mjs" edit <project>`. Build with `npm run build-vite` when the checkout has no current `dist/`, then open the printed loopback URL in the browser tool. The server is disposable, token-authenticated, loopback-only, and project-scoped. Implemented browser scope is project inspection, existing timeline/trim editing, save, and non-interactive middle cut/ripple-delete via `edit delete`; verify the persisted project readback. Stop the server after the task.
-- Local narration uses Kokoro only. If `kokoro doctor` is not ready, run `python3 "$REPO/skills/mega-recorder/scripts/kokoro_setup.py" --repo "$REPO" --json --ensure`, then synthesize with a voice reported by doctor. Model download/setup may use the network; synthesis and narration text stay local. Never use cloud TTS.
+- Local narration uses Kokoro only for TTS. If `kokoro doctor` is not ready, run `python3 "$REPO/skills/mega-recorder/scripts/kokoro_setup.py" --repo "$REPO" --json --ensure`, then synthesize with a voice reported by doctor. Model download/setup may use the network; narration text and synthesis stay local. Never configure or request a cloud TTS or other AI provider/API key.
 - Native `record` and `export` remain upstream Electron/native compatibility surfaces. Run doctor first, perform them only when explicitly requested and supported, and report them as unverified or blocked unless the requested artifact and a fresh verification exist. Do not open a visible Electron desktop app, add Remotion, or fake unsupported editor panels.
 
 ## Safety and handoff
