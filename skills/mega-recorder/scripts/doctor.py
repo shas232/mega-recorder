@@ -29,6 +29,18 @@ def parse_last_json(stdout: str) -> dict[str, Any] | None:
     return None
 
 
+def run_json(command: list[str], cwd: Path | None = None) -> tuple[int, dict[str, Any] | None, str]:
+    completed = subprocess.run(
+        command,
+        cwd=str(cwd) if cwd else None,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    return completed.returncode, parse_last_json(completed.stdout), completed.stderr.strip()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run local MEGA RECORDER doctor checks")
     parser.add_argument("--repo", required=True, help="product checkout path returned by bootstrap.py")
@@ -45,6 +57,31 @@ def main() -> int:
             }
         )
         return 1
+
+    native_setup: dict[str, Any]
+    native_setup_stderr = ""
+    native_setup_script = Path(__file__).resolve().parent / "native_setup.py"
+    if native_setup_script.is_file():
+        _, native_setup_value, native_setup_stderr = run_json(
+            [sys.executable, str(native_setup_script), "--repo", str(repo), "--json"]
+        )
+        native_setup = native_setup_value or {
+            "ok": False,
+            "command": "native-setup",
+            "error": {
+                "code": "NATIVE_SETUP_INVALID_OUTPUT",
+                "message": native_setup_stderr or "Native setup did not return JSON.",
+            },
+        }
+    else:
+        native_setup = {
+            "ok": False,
+            "command": "native-setup",
+            "error": {
+                "code": "NATIVE_SETUP_MISSING",
+                "message": "The native payload verifier is not present in this skill checkout.",
+            },
+        }
 
     environment = os.environ.copy()
     environment.setdefault("MEGA_RECORDER_NO_NETWORK", "1")
@@ -92,12 +129,18 @@ def main() -> int:
             "ready": bool(product.get("ready")),
             "checks": product.get("checks", {}),
             "upstream": product.get("upstream", {}),
-            "nativeCapture": "unverified",
-            "nativeExport": "unverified",
+            "nativeSetup": native_setup,
+            "nativeCapture": "verified-payload" if native_setup.get("ready") else "unverified",
+            "nativeExport": "verified-payload" if native_setup.get("ready") else "unverified",
             "product": product,
             **(
                 {"stderr": completed.stderr.strip()}
                 if completed.stderr.strip()
+                else {}
+            ),
+            **(
+                {"nativeSetupStderr": native_setup_stderr}
+                if native_setup_stderr
                 else {}
             ),
         }

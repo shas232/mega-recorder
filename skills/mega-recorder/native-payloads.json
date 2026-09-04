@@ -1,0 +1,27 @@
+{
+	"repository": "https://github.com/getopenscreen/openscreen",
+	"release": "v1.10.0",
+	"archiveRoot": "Openscreen.app/Contents/Resources/electron/native/bin",
+	"assets": {
+		"darwin-arm64": {
+			"name": "Openscreen-Mac-arm64-1.10.0.zip",
+			"url": "https://github.com/getopenscreen/openscreen/releases/download/v1.10.0/Openscreen-Mac-arm64-1.10.0.zip",
+			"sha256": "0b4adc17f7e3b9985abcde74fa6532e738d75e54ab5b3d5374393869d5128264"
+		},
+		"darwin-x64": {
+			"name": "Openscreen-Mac-x64-1.10.0.zip",
+			"url": "https://github.com/getopenscreen/openscreen/releases/download/v1.10.0/Openscreen-Mac-x64-1.10.0.zip",
+			"sha256": "87c4fda274fbb6cf7c056add496d93c9163ae3cf3a6c053e0c395ccdc7d45b82"
+		}
+	},
+	"files": [
+		"openscreen-screencapturekit-helper",
+		"openscreen-macos-cursor-helper",
+		"compositor_view.node",
+		"libavformat.62.dylib",
+		"libavcodec.62.dylib",
+		"libavutil.60.dylib",
+		"libswscale.9.dylib",
+		"libswresample.6.dylib"
+	]
+}

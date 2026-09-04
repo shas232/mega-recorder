@@ -76,6 +76,22 @@ is retained as a compatibility alias.
 The upstream `LICENSE` and `THIRD-PARTY-NOTICES.md` files remain the governing
 attribution and license records.
 
+## Native macOS setup
+
+Before using native `record` or `export` on macOS, the skill runs the pinned,
+hash-verified upstream payload setup:
+
+```bash
+python3 skills/mega-recorder/scripts/native_setup.py --repo "$PWD" --ensure --json
+```
+
+It detects arm64/x64, extracts only the signed ScreenCaptureKit/compositor
+payloads and their LGPL FFmpeg dylibs from OpenScreen `v1.10.0`, and records
+the installed hashes under the checkout's ignored `electron/native/bin`
+directory. No installed `/Applications/Openscreen.app` is used. The hidden
+Electron CLI runner still needs the user's normal macOS Screen Recording
+permission; setup never changes macOS permissions.
+
 ## Extension points
 
 - React renderer and editor: `src/`

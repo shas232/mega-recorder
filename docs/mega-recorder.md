@@ -48,6 +48,29 @@ The `record` and `export` commands are compatibility wrappers around the
 upstream OpenScreen CLI. Build the renderer first (`npm run build-vite`) and
 run `node scripts/mega-recorder-cli.mjs record ...` when using those commands.
 
+## Native macOS payloads
+
+The shareable skill installs the native capture and export payloads from the
+official OpenScreen `v1.10.0` release. On a supported Mac, run this once after
+bootstrapping the checkout:
+
+```bash
+python3 skills/mega-recorder/scripts/native_setup.py \
+  --repo "$PWD" --ensure --json
+python3 skills/mega-recorder/scripts/doctor.py \
+  --repo "$PWD" --json
+```
+
+`native_setup.py` selects the arm64 or x64 archive, verifies its pinned
+SHA-256 digest before extraction, rejects archive symlinks/path traversal, and
+verifies the extracted macOS code signatures. It writes only the required
+ScreenCaptureKit helper, cursor helper, compositor addon, and LGPL FFmpeg
+dylibs under `electron/native/bin/darwin-{arm64,x64}`. It does not inspect or
+copy `/Applications/Openscreen.app`; the upstream `LICENSE` and
+`THIRD-PARTY-NOTICES.md` remain in the checkout. Native record/export still
+requires the user's normal macOS Screen Recording permission and is driven by
+the hidden Electron CLI runner, not a visible desktop window.
+
 ## Browser editor
 
 `mega-recorder edit <project>` starts a localhost-only server for the existing

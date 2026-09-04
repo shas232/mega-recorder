@@ -210,20 +210,86 @@ function executableStatus(executable, args = ["--version"]) {
 	};
 }
 
+const NATIVE_MAC_PAYLOADS = [
+	"openscreen-screencapturekit-helper",
+	"openscreen-macos-cursor-helper",
+	"compositor_view.node",
+	"libavformat.62.dylib",
+	"libavcodec.62.dylib",
+	"libavutil.60.dylib",
+	"libswscale.9.dylib",
+	"libswresample.6.dylib",
+];
+
+async function nativePayloadStatus() {
+	if (process.platform !== "darwin") {
+		return {
+			supported: false,
+			ready: false,
+			platform: process.platform,
+			architecture: process.arch,
+			note: "Pinned MEGA RECORDER native payloads are currently macOS-only.",
+		};
+	}
+	const arch = process.arch === "arm64" ? "arm64" : process.arch === "x64" ? "x64" : process.arch;
+	const tag = `darwin-${arch}`;
+	const directory = path.join(REPO_ROOT, "electron", "native", "bin", tag);
+	const files = {};
+	for (const name of NATIVE_MAC_PAYLOADS) {
+		const candidate = path.join(directory, name);
+		try {
+			const info = await fs.stat(candidate);
+			files[name] = {
+				path: candidate,
+				present: info.isFile(),
+				executable: (info.mode & 0o111) !== 0,
+			};
+		} catch {
+			files[name] = { path: candidate, present: false, executable: false };
+		}
+	}
+	let marker = null;
+	try {
+		marker = JSON.parse(await fs.readFile(path.join(directory, ".mega-recorder-native.json"), "utf8"));
+	} catch {
+		// Local source builds do not have a release marker; the helper paths above
+		// remain useful diagnostics, while the skill verifier requires provenance.
+	}
+	const helperArtifactsPresent = [
+		"openscreen-screencapturekit-helper",
+		"openscreen-macos-cursor-helper",
+	].every((name) => files[name]?.present && files[name]?.executable);
+	const exportArtifactsPresent = [
+		"compositor_view.node",
+		"libavformat.62.dylib",
+		"libavcodec.62.dylib",
+		"libavutil.60.dylib",
+		"libswscale.9.dylib",
+		"libswresample.6.dylib",
+	].every((name) => files[name]?.present);
+	return {
+		supported: arch === "arm64" || arch === "x64",
+		ready: helperArtifactsPresent && exportArtifactsPresent,
+		platform: process.platform,
+		architecture: arch,
+		tag,
+		directory,
+		helperArtifactsPresent,
+		exportArtifactsPresent,
+		provenance: marker?.release ? "verified-release" : "local-or-unknown",
+		release: marker?.release ?? null,
+		files,
+	};
+}
+
 export async function runDoctor() {
-	const [baseline, version, kokoro] = await Promise.all([
+	const [baseline, version, kokoro, native] = await Promise.all([
 		readBaseline(),
 		commandVersion(),
 		kokoroDoctor(),
+		nativePayloadStatus(),
 	]);
 	const ffprobe = executableStatus(process.env.MEGA_RECORDER_FFPROBE || "ffprobe", ["-version"]);
-	const nativeBin = path.join(REPO_ROOT, "electron", "native", "bin");
-	let nativeHelpersPresent = false;
-	try {
-		nativeHelpersPresent = (await fs.readdir(nativeBin)).length > 0;
-	} catch {
-		nativeHelpersPresent = false;
-	}
 	return result("doctor", {
 		product: "MEGA RECORDER",
 		version,
@@ -241,7 +307,7 @@ export async function runDoctor() {
 			},
 			nativeCapture: {
 				status: "delegated",
-				helperArtifactsPresent: nativeHelpersPresent,
+				...native,
 				note: "Recording uses the upstream Electron/native pipeline; this command does not fake capture.",
 			},
 		},
