@@ -10,7 +10,7 @@ This file is intentionally standalone. It is written for the host agent (Codex, 
 ### Placement
 
 - Codex: place this file at `~/.codex/skills/mega-recorder/SKILL.md` and invoke `$mega-recorder` or describe the requested workflow.
-- Claude Code: place this file at `.claude/skills/mega-recorder/SKILL.md` (project or user scope) and invoke the skill using the host's normal skill command.
+- Claude Code: place this file at `~/.claude/skills/mega-recorder/SKILL.md` for personal scope or `.claude/skills/mega-recorder/SKILL.md` for project scope, then invoke it using the host's normal skill command.
 
 The shared artifact remains this one `SKILL.md`; `agents/openai.yaml` and the helper scripts are optional repository resources, not prerequisites for bootstrapping.
 
