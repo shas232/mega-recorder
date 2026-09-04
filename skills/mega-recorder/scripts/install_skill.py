@@ -24,6 +24,7 @@ def main() -> int:
     parser.add_argument("--target", help="Codex skill directory (defaults to ~/.codex/skills/mega-recorder)")
     parser.add_argument("--repo", help="optional product checkout to save in local, unshipped config.json")
     parser.add_argument("--force", action="store_true", help="replace an existing exact target directory")
+    parser.add_argument("--standalone", action="store_true", help="install only SKILL.md, leaving helpers in the product repo")
     parser.add_argument("--json", action="store_true", help="kept for explicit machine-readable invocation")
     args = parser.parse_args()
 
@@ -67,10 +68,14 @@ def main() -> int:
     backup: Path | None = None
     try:
         shutil.rmtree(stage)
-        shutil.copytree(source, stage)
+        if args.standalone:
+            stage.mkdir(parents=True)
+            shutil.copy2(source / "SKILL.md", stage / "SKILL.md")
+        else:
+            shutil.copytree(source, stage)
         # config.json is intentionally created only in the installed copy; it is
         # never part of the source skill or portable archive.
-        if configured_repo:
+        if configured_repo and not args.standalone:
             (stage / "config.json").write_text(
                 json.dumps({"productRepo": str(configured_repo)}, separators=(",", ":")) + "\n",
                 encoding="utf-8",
@@ -90,7 +95,8 @@ def main() -> int:
                 "command": "install",
                 "source": str(source),
                 "target": str(target),
-                "configuredRepo": str(configured_repo) if configured_repo else None,
+                "configuredRepo": str(configured_repo) if configured_repo and not args.standalone else None,
+                "standalone": args.standalone,
             }
         )
         return 0

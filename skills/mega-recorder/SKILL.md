@@ -1,30 +1,42 @@
 ---
 name: mega-recorder
-description: Operate the local-first MEGA RECORDER/OpenScreen workflow for recording, browser editing, local Kokoro narration, presets, verification, and export when the user asks for those tasks. Use the bundled bootstrap and doctor helpers; do not use for unrelated video editing.
+description: Operate the local-first MEGA RECORDER/OpenScreen workflow for recording, browser editing, local Kokoro narration, presets, verification, and export. Use when the user asks Codex to perform one of those workflows; do not use for unrelated video editing.
 ---
 
 # MEGA Recorder
 
-Use this skill when the user asks Codex to record, edit, narrate, verify, apply a preset, or export with MEGA RECORDER. The skill operates the product for the user; do not turn setup into a checklist for them.
+This file is intentionally standalone. When it is copied by itself, do not expect companion skill files: locate or clone the product first, then use the helpers in that checkout. Execute setup and one-time commands for the user rather than handing them a manual checklist.
 
-## Start every task
+## Product source and bootstrap
 
-1. Run `python3 scripts/bootstrap.py --json` from this skill directory. It first detects an existing product checkout using `MEGA_RECORDER_HOME`, installed config, the current directory/ancestors, and generic home-relative locations. If none exists, it bootstraps the pinned upstream source and applies the bundled product delta when a published MEGA RECORDER ref is unavailable. Use the returned `repo` path for every later command.
-2. Run `python3 scripts/doctor.py --repo <repo> --json` before any native capture/export or dependency-changing operation. Doctor output is evidence, not a success claim: report `ready`, blockers, and unverified surfaces separately.
-3. For narration, run `python3 scripts/kokoro_setup.py --repo <repo> --json --ensure` only when local Kokoro doctor is not ready. This may install a local runtime/model cache as needed. Synthesis itself must remain offline; never send narration to a cloud TTS provider.
+- Canonical repository: `https://github.com/shas232/mega-recorder.git`
+- Pinned release: `v0.1.1` (use this tag unless the user explicitly requests another ref)
+- Per-user default checkout: `${MEGA_RECORDER_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/mega-recorder}/openscreen`
 
-## Mode routing
+1. Locate a valid existing checkout from `MEGA_RECORDER_HOME`, a configured product path, the current directory/ancestors, or generic home-relative locations. A valid checkout has `package.json` and `scripts/mega-recorder-cli.mjs`.
+2. If none is available, create the per-user data directory and clone the canonical repository at the pinned tag:
 
-- Inspection, presets, and verification use the existing CLI directly: `node scripts/mega-recorder-cli.mjs <command>`, or the documented npm wrapper. Preserve its one-JSON-object output. For a non-interactive middle cut/ripple-delete, use the CLI's `edit delete` operation and verify the persisted project readback.
-- Browser editing uses `node scripts/mega-recorder-cli.mjs edit <project>`. Build the renderer with `npm run build-vite` if the checkout has no current `dist/`, then open the printed localhost URL with the browser tool. The server is loopback-only, token-authenticated, project-scoped, and disposable. Implemented browser scope is project inspection, existing timeline/trim editing, save, and non-interactive `edit delete`; do not claim native compositor, camera capture/playback, AI provider calls, or export support there.
-- Local narration uses `kokoro synthesize` after the local setup/doctor gate. Keep source text and model execution local; select a voice reported by `kokoro doctor`.
-- Native `record` and `export` remain upstream Electron/native compatibility commands. Run doctor first, execute only when requested and supported by the machine, and report native capture/export as unverified or blocked unless the requested artifact and a fresh verification actually exist. Never add Remotion or substitute a cloud service.
+   ```sh
+   MEGA_RECORDER_ROOT="${MEGA_RECORDER_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/mega-recorder}"
+   mkdir -p "$MEGA_RECORDER_ROOT"
+   git clone --branch v0.1.1 --depth 1 https://github.com/shas232/mega-recorder.git "$MEGA_RECORDER_ROOT/openscreen"
+   ```
+
+   Never clone over an existing directory or choose an arbitrary user path. Set `REPO` to the resolved checkout for all later commands.
+3. Run the checkout's `skills/mega-recorder/scripts/bootstrap.py --repo "$REPO" --no-bootstrap --json` to validate discovery, then `doctor.py --repo "$REPO" --json` before native capture/export or dependency-changing work. If Node dependencies are missing, run `npm ci` in `REPO` and rerun doctor. Treat doctor output as evidence, not proof that recording or export succeeded.
+
+The repository contains the deterministic helpers and product assets needed after cloning: `bootstrap.py`, `doctor.py`, `kokoro_setup.py`, `install_skill.py`, `smoke.py`, and the bundled upstream-to-product patch. Do not require those files before the initial clone.
+
+## Route the request
+
+- Inspection, presets, and verification use the existing CLI: `node "$REPO/scripts/mega-recorder-cli.mjs" <command>`. Preserve its stable JSON output.
+- Browser editing uses `node "$REPO/scripts/mega-recorder-cli.mjs" edit <project>`. Build with `npm run build-vite` when the checkout has no current `dist/`, then open the printed loopback URL in the browser tool. The server is disposable, token-authenticated, loopback-only, and project-scoped. Implemented browser scope is project inspection, existing timeline/trim editing, save, and non-interactive middle cut/ripple-delete via `edit delete`; verify the persisted project readback. Stop the server after the task.
+- Local narration uses Kokoro only. If `kokoro doctor` is not ready, run `python3 "$REPO/skills/mega-recorder/scripts/kokoro_setup.py" --repo "$REPO" --json --ensure`, then synthesize with a voice reported by doctor. Model download/setup may use the network; synthesis and narration text stay local. Never use cloud TTS.
+- Native `record` and `export` remain upstream Electron/native compatibility surfaces. Run doctor first, perform them only when explicitly requested and supported, and report them as unverified or blocked unless the requested artifact and a fresh verification exist. Do not open a visible Electron desktop app, add Remotion, or fake unsupported editor panels.
 
 ## Safety and handoff
 
-- Preserve source media and project files by default. Write sibling outputs and use `--in-place` only when the user explicitly requests it. Before/after edits, compare SHA-256 hashes of source media and report that media bytes were untouched.
-- Do not expose arbitrary filesystem paths through the browser server, bind beyond `127.0.0.1`, add telemetry, or leave a browser-editor server running after the task.
-- Prefer the existing OpenScreen project store, renderer, timeline, and CLI contracts. Do not create a parallel editor or visible Electron window for browser editing.
-- Return the exact repo, command, output path/URL, verification evidence, and remaining native/editor limitations. A doctor pass, backup, or server start is not proof that recording/export succeeded.
-
-The deterministic helpers are [bootstrap.py](scripts/bootstrap.py), [doctor.py](scripts/doctor.py), [kokoro_setup.py](scripts/kokoro_setup.py), [install_skill.py](scripts/install_skill.py), and [smoke.py](scripts/smoke.py). Codex should invoke them as needed; teammates should not need one-time manual setup commands. `smoke.py --fresh --source-repo <checkout>` exercises a temporary base clone plus the bundled product delta.
+- Preserve source media and project files. Write sibling outputs; use `--in-place` only when explicitly requested. Compare SHA-256 hashes before/after edits and state that source media bytes were untouched.
+- Keep browser serving confined to `127.0.0.1` (or a Unix socket), use the per-process token, serve only the selected project, and add no telemetry or unrelated network dependency. No arbitrary filesystem paths may be exposed.
+- Prefer the existing OpenScreen renderer, project store, timeline, and CLI contracts; do not build a parallel editor.
+- Return the resolved checkout/ref, exact commands, output paths or browser URL, fresh verification evidence, and remaining native/editor limitations. A backup, doctor pass, or server start is not success evidence by itself.

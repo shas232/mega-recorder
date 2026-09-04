@@ -21,11 +21,10 @@ from typing import Any, Iterable
 
 
 COMMAND = "bootstrap"
-PRODUCT_URL = "https://github.com/getopenscreen/openscreen.git"
-# The maintained OpenScreen source pin. A product branch may be supplied by the
-# environment when the MEGA RECORDER layer is published separately.
-PRODUCT_REF = "cc7d514a93c828f52b5cf28a1aaf091c399f2bd1"
-PRODUCT_BRANCH = "feature/bootstrap-mega-recorder"
+PRODUCT_URL = "https://github.com/shas232/mega-recorder.git"
+# The published MEGA RECORDER release. A caller may explicitly override the ref.
+PRODUCT_REF = "v0.1.1"
+PRODUCT_BRANCH = "main"
 PRODUCT_PATCH = Path(__file__).resolve().parents[1] / "assets" / "mega-recorder-product.patch"
 
 
