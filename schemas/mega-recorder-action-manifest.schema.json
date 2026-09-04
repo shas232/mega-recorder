@@ -1,0 +1,57 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://github.com/shas232/mega-recorder/schemas/mega-recorder-action-manifest.schema.json",
+	"title": "MEGA RECORDER host-agent action manifest",
+	"type": "object",
+	"additionalProperties": false,
+	"required": ["schemaVersion", "actions"],
+	"properties": {
+		"schemaVersion": { "const": 1 },
+		"projectId": { "type": "string", "minLength": 1 },
+		"assetId": { "type": "string", "minLength": 1 },
+		"actions": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/action" }
+		}
+	},
+	"$defs": {
+		"unit": { "type": "number", "minimum": 0, "maximum": 1 },
+		"point": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["x", "y"],
+			"properties": { "x": { "$ref": "#/$defs/unit" }, "y": { "$ref": "#/$defs/unit" } }
+		},
+		"targetRect": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["x", "y", "width", "height"],
+			"properties": {
+				"x": { "$ref": "#/$defs/unit" },
+				"y": { "$ref": "#/$defs/unit" },
+				"width": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+				"height": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+			}
+		},
+		"action": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["id", "timestampSec", "label"],
+			"properties": {
+				"id": { "type": "string", "minLength": 1, "maxLength": 80, "pattern": "^[A-Za-z0-9_-]+$" },
+				"timestampSec": { "type": "number", "minimum": 0 },
+				"label": { "type": "string", "minLength": 1, "maxLength": 160 },
+				"point": { "$ref": "#/$defs/point" },
+				"targetRect": { "$ref": "#/$defs/targetRect" },
+				"sceneId": { "type": "string", "maxLength": 160 }
+			},
+			"anyOf": [
+				{ "required": ["point"], "properties": { "point": { "$ref": "#/$defs/point" } } },
+				{
+					"required": ["targetRect"],
+					"properties": { "targetRect": { "$ref": "#/$defs/targetRect" } }
+				}
+			]
+		}
+	}
+}
