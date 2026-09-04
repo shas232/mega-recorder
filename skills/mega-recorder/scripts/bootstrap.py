@@ -23,7 +23,7 @@ from typing import Any, Iterable
 COMMAND = "bootstrap"
 PRODUCT_URL = "https://github.com/shas232/mega-recorder.git"
 # The published MEGA RECORDER release. A caller may explicitly override the ref.
-PRODUCT_REF = "v0.1.1"
+PRODUCT_REF = "v0.1.2"
 PRODUCT_BRANCH = "main"
 PRODUCT_PATCH = Path(__file__).resolve().parents[1] / "assets" / "mega-recorder-product.patch"
 
