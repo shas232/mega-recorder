@@ -23,7 +23,9 @@ from typing import Any, Iterable
 COMMAND = "bootstrap"
 PRODUCT_URL = "https://github.com/shas232/mega-recorder.git"
 # The published MEGA RECORDER release. A caller may explicitly override the ref.
-PRODUCT_REF = "v0.1.2"
+PRODUCT_REF = "v0.1.3"
+# The upstream ancestor used by the bundled product delta fallback.
+PRODUCT_BASE_REF = "cc7d514a93c828f52b5cf28a1aaf091c399f2bd1"
 PRODUCT_BRANCH = "main"
 PRODUCT_PATCH = Path(__file__).resolve().parents[1] / "assets" / "mega-recorder-product.patch"
 
@@ -108,11 +110,11 @@ def apply_product_delta(stage: Path) -> tuple[bool, dict[str, Any]]:
             "message": f"Bundled product patch is missing: {PRODUCT_PATCH.name}",
         }
 
-    base_fetch = run_git(["fetch", "--depth", "1", "origin", PRODUCT_REF], stage)
+    base_fetch = run_git(["fetch", "--depth", "1", "origin", PRODUCT_BASE_REF], stage)
     if base_fetch.returncode != 0:
         return False, {
             "code": "PRODUCT_BASE_UNAVAILABLE",
-            "message": base_fetch.stderr.strip() or f"Unable to fetch product base {PRODUCT_REF}",
+            "message": base_fetch.stderr.strip() or f"Unable to fetch product base {PRODUCT_BASE_REF}",
         }
     checkout = run_git(["checkout", "--detach", "FETCH_HEAD"], stage)
     if checkout.returncode != 0:
@@ -125,19 +127,20 @@ def apply_product_delta(stage: Path) -> tuple[bool, dict[str, Any]]:
         return False, {
             "code": "PRODUCT_PATCH_FAILED",
             "message": applied.stderr.strip() or "Unable to apply bundled product patch",
-            "baseRef": PRODUCT_REF,
+            "baseRef": PRODUCT_BASE_REF,
         }
     if not valid_repo(stage):
         return False, {
             "code": "PRODUCT_PATCH_INCOMPATIBLE",
             "message": "Bundled product patch did not produce a valid MEGA RECORDER checkout.",
-            "baseRef": PRODUCT_REF,
+            "baseRef": PRODUCT_BASE_REF,
         }
     patch_hash = hashlib.sha256(PRODUCT_PATCH.read_bytes()).hexdigest()
     return True, {
         "source": "bootstrapped-patched",
         "created": True,
-        "ref": PRODUCT_REF,
+        "ref": PRODUCT_BASE_REF,
+        "release": PRODUCT_REF,
         "productPatch": PRODUCT_PATCH.name,
         "productPatchSha256": patch_hash,
     }
@@ -171,9 +174,9 @@ def bootstrap_repo(root: Path, url: str, ref: str, branch: str) -> tuple[Path | 
         if fetch.returncode != 0 and branch and requested_ref != branch:
             fetch = run_git(["fetch", "--depth", "1", "origin", branch], stage)
             selected_ref = branch
-        if fetch.returncode != 0 and ref != PRODUCT_REF:
-            fetch = run_git(["fetch", "--depth", "1", "origin", PRODUCT_REF], stage)
-            selected_ref = PRODUCT_REF
+        if fetch.returncode != 0 and ref != PRODUCT_BASE_REF:
+            fetch = run_git(["fetch", "--depth", "1", "origin", PRODUCT_BASE_REF], stage)
+            selected_ref = PRODUCT_BASE_REF
         if fetch.returncode != 0:
             return None, {
                 "code": "BOOTSTRAP_REF_UNAVAILABLE",
@@ -208,7 +211,7 @@ def main() -> int:
     parser.add_argument("--repo", help="explicit product checkout path")
     parser.add_argument("--root", help="bootstrap root (defaults to a user-local data directory)")
     parser.add_argument("--url", default=os.environ.get("MEGA_RECORDER_REPOSITORY", PRODUCT_URL))
-    parser.add_argument("--ref", default=os.environ.get("MEGA_RECORDER_REF", PRODUCT_BRANCH))
+    parser.add_argument("--ref", default=os.environ.get("MEGA_RECORDER_REF", PRODUCT_REF))
     parser.add_argument("--no-bootstrap", action="store_true")
     parser.add_argument("--force-bootstrap", action="store_true", help="skip discovery and create a fresh checkout under --root")
     parser.add_argument("--json", action="store_true", help="kept for explicit machine-readable invocation")
