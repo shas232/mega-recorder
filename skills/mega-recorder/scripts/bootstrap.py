@@ -23,7 +23,7 @@ from typing import Any, Iterable
 COMMAND = "bootstrap"
 PRODUCT_URL = "https://github.com/shas232/mega-recorder.git"
 # The published MEGA RECORDER release. A caller may explicitly override the ref.
-PRODUCT_REF = "v0.1.4"
+PRODUCT_REF = "v0.2.0"
 # The upstream ancestor used by the bundled product delta fallback.
 PRODUCT_BASE_REF = "cc7d514a93c828f52b5cf28a1aaf091c399f2bd1"
 PRODUCT_BRANCH = "main"

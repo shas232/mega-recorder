@@ -250,7 +250,9 @@ async function nativePayloadStatus() {
 	}
 	let marker = null;
 	try {
-		marker = JSON.parse(await fs.readFile(path.join(directory, ".mega-recorder-native.json"), "utf8"));
+		marker = JSON.parse(
+			await fs.readFile(path.join(directory, ".mega-recorder-native.json"), "utf8"),
+		);
 	} catch {
 		// Local source builds do not have a release marker; the helper paths above
 		// remain useful diagnostics, while the skill verifier requires provenance.
@@ -697,18 +699,11 @@ async function editCommand(tokens) {
 		const start = optionValue(parsed, "--start");
 		const end = optionValue(parsed, "--end");
 		if (!project || start === undefined || end === undefined) {
-			throw Object.assign(
-				new Error("edit --delete requires a project, --start, and --end"),
-				{ code: "CLI_ARGUMENT_ERROR" },
-			);
+			throw Object.assign(new Error("edit --delete requires a project, --start, and --end"), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
 		}
-		const editTokens = [
-			project,
-			"--start",
-			start,
-			"--end",
-			end,
-		];
+		const editTokens = [project, "--start", start, "--end", end];
 		const requestedOutput = optionValue(parsed, "--output", "--out", "-o");
 		if (requestedOutput !== undefined) editTokens.push("--output", requestedOutput);
 		if (parsed.flags.has("--in-place")) editTokens.push("--in-place");
