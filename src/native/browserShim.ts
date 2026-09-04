@@ -62,11 +62,22 @@ function browserDocumentWithMediaUrls(config: BrowserEditorServerConfig, value: 
 	if (!value || typeof value !== "object") return value;
 	const document = JSON.parse(JSON.stringify(value)) as {
 		assets?: Array<{ id?: string; originalPath?: string }>;
+		timeline?: {
+			audioTracks?: Array<{ id?: string; sourcePath?: string }>;
+		};
 	};
-	if (!Array.isArray(document.assets)) return document;
-	for (const asset of document.assets) {
-		if (typeof asset.id === "string") {
-			asset.originalPath = `${config.baseUrl}/api/media/${encodeURIComponent(asset.id)}?token=${encodeURIComponent(config.token)}`;
+	if (Array.isArray(document.assets)) {
+		for (const asset of document.assets) {
+			if (typeof asset.id === "string") {
+				asset.originalPath = `${config.baseUrl}/api/media/${encodeURIComponent(asset.id)}?token=${encodeURIComponent(config.token)}`;
+			}
+		}
+	}
+	if (Array.isArray(document.timeline?.audioTracks)) {
+		for (const track of document.timeline.audioTracks) {
+			if (typeof track.id === "string") {
+				track.sourcePath = `${config.baseUrl}/api/audio/${encodeURIComponent(track.id)}?token=${encodeURIComponent(config.token)}`;
+			}
 		}
 	}
 	return document;

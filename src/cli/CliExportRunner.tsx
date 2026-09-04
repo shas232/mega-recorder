@@ -21,7 +21,12 @@ import {
 	resolveAspectRatioValue,
 } from "@/lib/ai-edition/document/outputFormat";
 import { applyProbedDuration } from "@/lib/ai-edition/document/timeline";
-import type { AxcutDocument } from "@/lib/ai-edition/schema";
+import {
+	type AxcutAudioTrack,
+	type AxcutDocument,
+	documentSchema,
+	migrateRawDocumentToCurrent,
+} from "@/lib/ai-edition/schema";
 import { getEditorSettings } from "@/lib/ai-edition/store/editorSettings";
 import { assetCameraSource } from "@/lib/ai-edition/timeline/camera";
 import { resolveClipSourceEndSec } from "@/lib/ai-edition/timeline/clipDuration";
@@ -31,13 +36,26 @@ import type { CliDoneResult, CliExportRequest } from "@/lib/cliContracts";
 import { GIF_SIZE_PRESETS, type GifSizePreset } from "@/lib/exporter";
 import { calculateMp4ExportSettings } from "@/lib/exporter/mp4ExportSettings";
 import { outputFrameCount } from "@/lib/exporter/outputFrameCount";
-import { mixVoiceoverIntoVideo } from "@/lib/exporter/voiceoverMix";
+import { mixAudioTracksIntoVideo, mixVoiceoverIntoVideo } from "@/lib/exporter/voiceoverMix";
 import { exportGifNative, exportMultiNative, nativeBridgeClient } from "@/native";
 import type { CompositorClipInput } from "@/native/contracts";
 import { buildSceneDescription, resolveVisibleClips } from "@/native/sceneDescription";
 import { clampZoomFocus } from "./vendor/zoomHelpers";
 
 const MP4_EXPORT_FPS = 60;
+
+function isAxcutDocument(value: unknown): value is AxcutDocument {
+	if (!value || typeof value !== "object") return false;
+	const candidate = value as Record<string, unknown>;
+	return (
+		candidate.schemaVersion === 7 &&
+		candidate.project !== null &&
+		typeof candidate.project === "object" &&
+		Array.isArray(candidate.assets) &&
+		candidate.timeline !== null &&
+		typeof candidate.timeline === "object"
+	);
+}
 
 function probeVideoDimensions(
 	url: string,
@@ -147,34 +165,60 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 	if (!loaded.success || loaded.project === undefined) {
 		throw new Error(loaded.error ?? loaded.message ?? "Failed to load project file");
 	}
-	if (!validateProjectData(loaded.project)) {
-		throw new Error("Project file is not a valid .openscreen project");
+	const directDocument = isAxcutDocument(loaded.project)
+		? documentSchema.parse(migrateRawDocumentToCurrent(loaded.project))
+		: null;
+	let project: Parameters<typeof migrateProjectDataToAxcutDocument>[0] | null = null;
+	let media: ReturnType<typeof resolveProjectMedia>;
+	let editor: ReturnType<typeof normalizeProjectEditor>;
+	let axcutDocument!: AxcutDocument;
+	if (directDocument) {
+		axcutDocument = directDocument;
+		const primary = axcutDocument.project.primaryAssetId
+			? axcutDocument.assets.find((asset) => asset.id === axcutDocument.project.primaryAssetId)
+			: axcutDocument.assets[0];
+		media = primary
+			? {
+					screenVideoPath: primary.originalPath,
+					...(primary.cameraTrack?.sourcePath
+						? { webcamVideoPath: primary.cameraTrack.sourcePath }
+						: {}),
+				}
+			: null;
+		editor = normalizeProjectEditor(axcutDocument.legacyEditor ?? {});
+	} else {
+		if (!validateProjectData(loaded.project)) {
+			throw new Error("Project file is not a valid .openscreen project");
+		}
+		project = loaded.project;
+		media = resolveProjectMedia(project);
+		editor = normalizeProjectEditor(project.editor ?? {});
 	}
-	const project = loaded.project;
-	const media = resolveProjectMedia(project);
 	if (!media) {
 		throw new Error("Project file does not reference any recorded media");
 	}
 	// Prefer the main process's approved session paths: they carry the
 	// packed-project sibling fallback when the stored absolute paths are stale.
-	try {
-		const sessionResult = await window.electronAPI.getCurrentRecordingSession();
-		const session = sessionResult?.session;
-		if (session?.screenVideoPath) {
-			media.screenVideoPath = session.screenVideoPath;
-			if (media.webcamVideoPath && session.webcamVideoPath) {
-				media.webcamVideoPath = session.webcamVideoPath;
+	if (!directDocument) {
+		try {
+			const sessionResult = await window.electronAPI.getCurrentRecordingSession();
+			const session = sessionResult?.session;
+			if (session?.screenVideoPath) {
+				media.screenVideoPath = session.screenVideoPath;
+				if (media.webcamVideoPath && session.webcamVideoPath) {
+					media.webcamVideoPath = session.webcamVideoPath;
+				}
 			}
+		} catch {
+			// Fall back to the paths stored in the project file.
 		}
-	} catch {
-		// Fall back to the paths stored in the project file.
 	}
-	const editor = normalizeProjectEditor(project.editor ?? {});
 
 	const format = request.format ?? editor.exportFormat;
-	if (request.audioPath && format === "gif") {
+	const attachedAudioTracks = axcutDocument.timeline.audioTracks;
+	if ((request.audioPath || attachedAudioTracks.length > 0) && format === "gif") {
 		throw new Error(
-			"--audio is only supported for MP4 exports (this project's stored format is gif; pass --format mp4)",
+			"Attached audio is only supported for MP4 exports (this project's stored format is gif; pass --format mp4)",
 		);
 	}
 	const quality = request.quality ?? editor.exportQuality;
@@ -195,15 +239,17 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 
 	const probed = await probeVideoDimensions(toFileUrl(media.screenVideoPath));
 
-	// Migrate the .openscreen project onto the AxcutDocument the native
-	// compositor consumes. The migration is pure and carries zooms, annotations,
-	// trims and the legacy editor settings; the clip's duration is unknown until
-	// probed, so applyProbedDuration must run or the export is a single frame.
-	let axcutDocument = migrateProjectDataToAxcutDocument({
-		...project,
-		media,
-		editor,
-	});
+	// Migrate legacy .openscreen projects onto the AxcutDocument the native
+	// compositor consumes. Direct Axcut documents are already in that shape and
+	// retain their first-class attached audio tracks unchanged.
+	if (!directDocument) {
+		if (!project) throw new Error("Project file could not be migrated");
+		axcutDocument = migrateProjectDataToAxcutDocument({
+			...project,
+			media,
+			editor,
+		});
+	}
 	const primaryAssetId = axcutDocument.project.primaryAssetId ?? axcutDocument.assets[0]?.id;
 	if (!primaryAssetId) {
 		throw new Error("Project migration produced no media asset");
@@ -320,23 +366,49 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 			codec: "h264",
 		});
 
-		if (request.audioPath) {
-			window.electronAPI.cliProgress({ percentage: 100, phase: "mixing-voiceover" });
-			const [videoResponse, audioResponse] = await Promise.all([
-				fetch(toFileUrl(outPath)),
-				fetch(toFileUrl(request.audioPath)),
-			]);
+		if (request.audioPath || attachedAudioTracks.length > 0) {
+			window.electronAPI.cliProgress({ percentage: 100, phase: "mixing-audio" });
+			const videoResponse = await fetch(toFileUrl(outPath));
 			if (!videoResponse.ok) {
 				throw new Error(`Failed to read the exported video back for mixing: ${outPath}`);
 			}
-			if (!audioResponse.ok) {
-				throw new Error(`Failed to read voiceover file: ${request.audioPath}`);
+			let mixed: Blob;
+			if (request.audioPath) {
+				const audioResponse = await fetch(toFileUrl(request.audioPath));
+				if (!audioResponse.ok) {
+					throw new Error(`Failed to read voiceover file: ${request.audioPath}`);
+				}
+				mixed = await mixVoiceoverIntoVideo(await videoResponse.blob(), {
+					voiceoverData: await audioResponse.arrayBuffer(),
+					mode: request.audioMode,
+					offsetSec: request.audioOffsetSec,
+				});
+			} else {
+				const tracks = await Promise.all(
+					attachedAudioTracks.map(async (track: AxcutAudioTrack) => {
+						const response = await fetch(toFileUrl(track.sourcePath));
+						if (!response.ok) {
+							throw new Error(
+								`Attached audio track "${track.label}" could not be read: ${track.sourcePath}`,
+							);
+						}
+						return {
+							data: await response.arrayBuffer(),
+							sourceStartSec: track.sourceStartSec,
+							sourceEndSec: track.sourceEndSec,
+							timelineStartSec: track.timelineStartSec,
+							timelineEndSec: track.timelineEndSec,
+							volume: track.volume,
+							muted: track.muted,
+							label: track.label,
+						};
+					}),
+				);
+				mixed = await mixAudioTracksIntoVideo(await videoResponse.blob(), {
+					tracks,
+					mode: axcutDocument.timeline.audioMixMode,
+				});
 			}
-			const mixed = await mixVoiceoverIntoVideo(await videoResponse.blob(), {
-				voiceoverData: await audioResponse.arrayBuffer(),
-				mode: request.audioMode,
-				offsetSec: request.audioOffsetSec,
-			});
 			const saveResult = await window.electronAPI.writeExportToPath(
 				await mixed.arrayBuffer(),
 				outPath,

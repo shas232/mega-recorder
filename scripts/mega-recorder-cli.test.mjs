@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +12,28 @@ import {
 import { applyPresetToProject, getPreset } from "./mega-recorder/preset.mjs";
 import { mediaMetadata, verifyMetadata } from "./mega-recorder/verify.mjs";
 import { runCommand } from "./mega-recorder-cli.mjs";
+
+function writeSilentWav(samplePath, durationSec = 1.25) {
+	const sampleRate = 24_000;
+	const channels = 1;
+	const bitsPerSample = 16;
+	const dataSize = Math.round(sampleRate * durationSec) * channels * (bitsPerSample / 8);
+	const buffer = Buffer.alloc(44 + dataSize);
+	buffer.write("RIFF", 0);
+	buffer.writeUInt32LE(36 + dataSize, 4);
+	buffer.write("WAVE", 8);
+	buffer.write("fmt ", 12);
+	buffer.writeUInt32LE(16, 16);
+	buffer.writeUInt16LE(1, 20);
+	buffer.writeUInt16LE(channels, 22);
+	buffer.writeUInt32LE(sampleRate, 24);
+	buffer.writeUInt32LE(sampleRate * channels * (bitsPerSample / 8), 28);
+	buffer.writeUInt16LE(channels * (bitsPerSample / 8), 32);
+	buffer.writeUInt16LE(bitsPerSample, 34);
+	buffer.write("data", 36);
+	buffer.writeUInt32LE(dataSize, 40);
+	return fs.writeFile(samplePath, buffer);
+}
 
 describe("MEGA RECORDER product layer", () => {
 	it("returns the deterministic blue-studio preset through the agent CLI", async () => {
@@ -279,4 +302,81 @@ describe("MEGA RECORDER product layer", () => {
 		]);
 		await fs.rm(directory, { recursive: true, force: true });
 	});
+
+	it.skipIf(spawnSync("ffprobe", ["-version"], { stdio: "ignore" }).status !== 0)(
+		"attaches a real probed WAV to an Axcut project and persists timing/mix policy",
+		async () => {
+			const directory = await fs.mkdtemp(path.join(os.tmpdir(), "mega-recorder-audio-"));
+			try {
+				const projectPath = path.join(directory, "demo.openscreen");
+				const audioPath = path.join(directory, "kokoro.wav");
+				await writeSilentWav(audioPath, 1.25);
+				await fs.writeFile(
+					projectPath,
+					JSON.stringify({
+						schemaVersion: 7,
+						project: {
+							id: "proj_audio",
+							title: "Audio test",
+							primaryAssetId: "asset_1",
+						},
+						assets: [
+							{
+								id: "asset_1",
+								kind: "video",
+								label: "Capture",
+								originalPath: "/tmp/capture.mp4",
+								durationSec: 10,
+							},
+						],
+						timeline: { clips: [], audioTracks: [] },
+						annotations: [],
+						zoomRanges: [],
+						legacyEditor: null,
+					}),
+					"utf8",
+				);
+				const response = await runCommand([
+					"audio",
+					"attach",
+					projectPath,
+					"--file",
+					audioPath,
+					"--voice",
+					"af_heart",
+					"--label",
+					"Kokoro intro",
+					"--start",
+					"3",
+					"--mode",
+					"replace",
+					"--in-place",
+				]);
+				expect(response).toMatchObject({
+					ok: true,
+					command: "audio attach",
+					mode: "replace",
+					track: {
+						kind: "narration",
+						voice: "af_heart",
+						timelineStartSec: 3,
+						status: "ready",
+					},
+				});
+				const saved = JSON.parse(await fs.readFile(projectPath, "utf8"));
+				expect(saved.timeline.audioMixMode).toBe("replace");
+				expect(saved.timeline.audioTracks).toHaveLength(1);
+				expect(saved.timeline.audioTracks[0]).toMatchObject({
+					label: "Kokoro intro",
+					sourcePath: audioPath,
+					timelineStartSec: 3,
+					timelineEndSec: 4.25,
+					sourceStartSec: 0,
+					voice: "af_heart",
+				});
+			} finally {
+				await fs.rm(directory, { recursive: true, force: true });
+			}
+		},
+	);
 });

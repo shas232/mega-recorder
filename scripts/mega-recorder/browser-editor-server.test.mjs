@@ -148,4 +148,78 @@ describe("browser editor server", () => {
 			await fs.rm(files.root, { recursive: true, force: true });
 		}
 	});
+
+	it("serves attached audio through the token-scoped route and preserves its canonical path on save", async () => {
+		const files = await fixture();
+		const audioPath = path.join(files.root, "kokoro.wav");
+		await fs.writeFile(audioPath, Buffer.from("test narration bytes"));
+		const original = JSON.parse(await fs.readFile(files.projectPath, "utf8"));
+		original.timeline.audioTracks = [
+			{
+				id: "audio_1",
+				kind: "narration",
+				label: "Kokoro intro",
+				sourcePath: audioPath,
+				voice: "af_heart",
+				sourceStartSec: 0,
+				sourceEndSec: 2,
+				timelineStartSec: 1,
+				timelineEndSec: 3,
+				volume: 1,
+				muted: false,
+				status: "ready",
+			},
+		];
+		original.timeline.audioMixMode = "mix";
+		await fs.writeFile(files.projectPath, JSON.stringify(original), "utf8");
+		const editor = await createBrowserEditorServer({
+			projectPath: files.projectPath,
+			distDir: path.resolve("dist"),
+		});
+		try {
+			const base = `http://${editor.host}:${editor.port}`;
+			const unauthorized = await fetch(`${base}/api/audio/audio_1`);
+			expect(unauthorized.status).toBe(401);
+			const audio = await fetch(`${base}/api/audio/audio_1?token=${editor.token}`);
+			expect(audio.status).toBe(200);
+			expect(audio.headers.get("content-type")).toContain("audio/wav");
+			expect(await audio.text()).toBe("test narration bytes");
+			const range = await fetch(`${base}/api/audio/audio_1?token=${editor.token}`, {
+				headers: { Range: "bytes=0-3" },
+			});
+			expect(range.status).toBe(206);
+			expect(await range.text()).toBe("test");
+
+			const loaded = await fetch(`${base}/api/bridge`, {
+				method: "POST",
+				headers: apiHeaders(editor.token),
+				body: JSON.stringify({
+					domain: "aiEdition",
+					action: "document.get",
+					payload: { projectId: "proj_browser_test" },
+				}),
+			});
+			const document = (await loaded.json()).data.document;
+			document.timeline.audioTracks[0].sourcePath = `${base}/api/audio/audio_1?token=wrong`;
+			document.timeline.audioTracks[0].volume = 0.6;
+			const save = await fetch(`${base}/api/bridge`, {
+				method: "POST",
+				headers: apiHeaders(editor.token),
+				body: JSON.stringify({
+					domain: "aiEdition",
+					action: "document.save",
+					payload: { document },
+				}),
+			});
+			expect(save.status).toBe(200);
+			const persisted = JSON.parse(await fs.readFile(files.projectPath, "utf8"));
+			expect(persisted.timeline.audioTracks[0]).toMatchObject({
+				sourcePath: audioPath,
+				volume: 0.6,
+			});
+		} finally {
+			await editor.close();
+			await fs.rm(files.root, { recursive: true, force: true });
+		}
+	});
 });

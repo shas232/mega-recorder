@@ -60,6 +60,9 @@ function projectSummary(document, projectPath) {
 				? document.project.updatedAt
 				: new Date(0).toISOString(),
 		assetCount: Array.isArray(document?.assets) ? document.assets.length : 0,
+		audioTrackCount: Array.isArray(document?.timeline?.audioTracks)
+			? document.timeline.audioTracks.length
+			: 0,
 	};
 }
 
@@ -105,6 +108,11 @@ function contentType(filePath) {
 			".mp4": "video/mp4",
 			".mov": "video/quicktime",
 			".m4v": "video/mp4",
+			".mp3": "audio/mpeg",
+			".m4a": "audio/mp4",
+			".aac": "audio/aac",
+			".ogg": "audio/ogg",
+			".flac": "audio/flac",
 			".wav": "audio/wav",
 		}[ext] ?? "application/octet-stream"
 	);
@@ -159,7 +167,36 @@ function canonicalizeSavedDocument(incoming, current, mediaPaths) {
 		}
 		return { ...asset, originalPath: original.originalPath };
 	});
-	return { ...incoming, assets };
+	const currentAudioTracks = Array.isArray(current.timeline?.audioTracks)
+		? current.timeline.audioTracks
+		: [];
+	const incomingAudioTracks = Array.isArray(incoming.timeline?.audioTracks)
+		? incoming.timeline.audioTracks
+		: [];
+	if (incomingAudioTracks.length !== currentAudioTracks.length) {
+		throw httpError(
+			403,
+			"PROJECT_SCOPE_VIOLATION",
+			"Browser editing cannot add or remove attached audio tracks.",
+		);
+	}
+	const currentAudioById = new Map(currentAudioTracks.map((track) => [track?.id, track]));
+	const audioTracks = incomingAudioTracks.map((track) => {
+		const original = currentAudioById.get(track?.id);
+		if (!original || typeof track?.id !== "string") {
+			throw httpError(
+				403,
+				"PROJECT_SCOPE_VIOLATION",
+				"Browser editing cannot change attached audio files.",
+			);
+		}
+		return { ...track, sourcePath: original.sourcePath };
+	});
+	return {
+		...incoming,
+		assets,
+		timeline: { ...incoming.timeline, audioTracks },
+	};
 }
 
 export async function createBrowserEditorServer({
@@ -263,6 +300,44 @@ export async function createBrowserEditorServer({
 		createReadStream(mediaPath, { start, end }).pipe(response);
 	};
 
+	const handleAudio = async (request, response, trackId) => {
+		const document = await readJson(selectedPath);
+		const track = Array.isArray(document.timeline?.audioTracks)
+			? document.timeline.audioTracks.find((item) => item?.id === trackId)
+			: null;
+		if (!track || typeof track.sourcePath !== "string")
+			throw httpError(404, "AUDIO_NOT_FOUND", "Audio is not attached to the selected project.");
+		const mediaPath = await fs.realpath(track.sourcePath).catch(() => null);
+		if (!mediaPath)
+			throw httpError(404, "AUDIO_NOT_FOUND", "Attached audio file is not available.");
+		const mediaStat = await fs.stat(mediaPath);
+		if (!mediaStat.isFile())
+			throw httpError(404, "AUDIO_NOT_FOUND", "Attached audio file is not a file.");
+		const range = request.headers.range;
+		let start = 0;
+		let end = mediaStat.size - 1;
+		let status = 200;
+		if (typeof range === "string") {
+			const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+			if (match) {
+				if (match[1]) start = Number(match[1]);
+				if (match[2]) end = Number(match[2]);
+				if (!match[1] && match[2]) start = Math.max(0, mediaStat.size - Number(match[2]));
+				end = Math.min(end, mediaStat.size - 1);
+				if (start <= end && start >= 0) status = 206;
+			}
+		}
+		if (start > end || start >= mediaStat.size)
+			throw httpError(416, "RANGE_NOT_SATISFIABLE", "Requested audio range is unavailable.");
+		response.writeHead(status, {
+			"Content-Type": contentType(mediaPath),
+			"Content-Length": end - start + 1,
+			"Accept-Ranges": "bytes",
+			...(status === 206 ? { "Content-Range": `bytes ${start}-${end}/${mediaStat.size}` } : {}),
+		});
+		createReadStream(mediaPath, { start, end }).pipe(response);
+	};
+
 	const server = http.createServer(async (request, response) => {
 		try {
 			const parsedUrl = new URL(request.url ?? "/", `http://${DEFAULT_HOST}`);
@@ -301,6 +376,11 @@ export async function createBrowserEditorServer({
 			if (parsedUrl.pathname.startsWith("/api/media/") && request.method === "GET") {
 				const assetId = decodeURIComponent(parsedUrl.pathname.slice("/api/media/".length));
 				await handleMedia(request, response, assetId);
+				return;
+			}
+			if (parsedUrl.pathname.startsWith("/api/audio/") && request.method === "GET") {
+				const trackId = decodeURIComponent(parsedUrl.pathname.slice("/api/audio/".length));
+				await handleAudio(request, response, trackId);
 				return;
 			}
 			if (parsedUrl.pathname.startsWith("/api/"))
