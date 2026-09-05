@@ -5,7 +5,7 @@ open-source desktop screen recorder and video editor.
 
 ## Pinned source
 
-- Product release: `v0.3.1`
+- Product release: `v0.3.2`
 - Upstream: <https://github.com/getopenscreen/openscreen>
 - Selected ref: `origin/main`
 - Selected commit: `cc7d514a93c828f52b5cf28a1aaf091c399f2bd1`

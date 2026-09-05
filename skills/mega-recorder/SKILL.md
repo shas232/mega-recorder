@@ -82,7 +82,7 @@ The shared artifact remains this one `SKILL.md`; `agents/openai.yaml` and the he
 ## Product source and bootstrap
 
 - Canonical repository: `https://github.com/shas232/mega-recorder.git`
-- Pinned release: `v0.3.1` (use this tag unless the user explicitly requests another ref)
+- Pinned release: `v0.3.2` (use this tag unless the user explicitly requests another ref)
 - Per-user default checkout: `${MEGA_RECORDER_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/mega-recorder}/openscreen`
 
 1. Locate a valid existing checkout from `MEGA_RECORDER_HOME`, a configured product path, the current directory/ancestors, or generic home-relative locations. A valid checkout has `package.json` and `scripts/mega-recorder-cli.mjs`.
@@ -91,11 +91,11 @@ The shared artifact remains this one `SKILL.md`; `agents/openai.yaml` and the he
    ```sh
    MEGA_RECORDER_ROOT="${MEGA_RECORDER_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/mega-recorder}"
    mkdir -p "$MEGA_RECORDER_ROOT"
-   git clone --branch v0.3.1 --depth 1 https://github.com/shas232/mega-recorder.git "$MEGA_RECORDER_ROOT/openscreen"
+   git clone --branch v0.3.2 --depth 1 https://github.com/shas232/mega-recorder.git "$MEGA_RECORDER_ROOT/openscreen"
    ```
 
    Never clone over an existing directory or choose an arbitrary user path. Set `REPO` to the resolved checkout for all later commands.
-3. Verify the checkout's `mega-recorder.manifest.json` declares `productRelease: "v0.3.1"` and the crop, scenes, and recording-clock helpers exist before running its bootstrap helper. If the checkout is older, keep it intact and clone the pinned release into an unused sibling directory, then set `REPO` to that directory. Run `python3 "$REPO/skills/mega-recorder/scripts/bootstrap.py" --repo "$REPO" --ref v0.3.1 --no-bootstrap --json` to validate compatibility. Inspect its runtime report; install missing prerequisites using available official package managers, then run `npm ci` when dependencies are missing. Verify `node_modules/.bin/electron` and `node_modules/electron/dist` exist; run `npm rebuild electron --force` if the Electron runtime is missing or corrupt. Build with `npm run build-vite` after installation or a source update. Run `doctor.py --repo "$REPO" --json` before native capture/export. A missing operating-system permission may require the user's one-time interaction; do not claim setup is complete without the required tools.
+3. Verify the checkout's `mega-recorder.manifest.json` declares `productRelease: "v0.3.2"` and the crop, scenes, and recording-clock helpers exist before running its bootstrap helper. If the checkout is older, keep it intact and clone the pinned release into an unused sibling directory, then set `REPO` to that directory. Run `python3 "$REPO/skills/mega-recorder/scripts/bootstrap.py" --repo "$REPO" --ref v0.3.2 --no-bootstrap --json` to validate compatibility. Inspect its runtime report; install missing prerequisites using available official package managers, then run `npm ci` when dependencies are missing. Verify `node_modules/.bin/electron` and `node_modules/electron/dist` exist; run `npm rebuild electron --force` if the Electron runtime is missing or corrupt. Build with `npm run build-vite` after installation or a source update. Run `doctor.py --repo "$REPO" --json` before native capture/export. A missing operating-system permission may require the user's one-time interaction; do not claim setup is complete without the required tools.
 4. Before every `record` or `export` on macOS, install the native payloads from the pinned upstream release with `python3 "$REPO/skills/mega-recorder/scripts/native_setup.py" --repo "$REPO" --ensure --json`, then rerun `doctor.py`. The helper detects arm64/x64, verifies the official archive SHA-256, extracts only the required signed ScreenCaptureKit/compositor/FFmpeg files into the checkout, and never reads `/Applications/Openscreen.app`. If the host is not a supported macOS architecture, leave native capture/export unverified and report the structured error.
 
 The repository contains the deterministic helpers and product assets needed after cloning: `bootstrap.py`, `doctor.py`, `kokoro_setup.py`, `install_skill.py`, `smoke.py`, and the bundled upstream-to-product patch. Do not require those files before the initial clone.

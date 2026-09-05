@@ -44,7 +44,7 @@ def make_checkout(root: Path, release: str) -> Path:
 
 class BootstrapTests(unittest.TestCase):
     def test_pins_next_product_release(self) -> None:
-        self.assertEqual(bootstrap.PRODUCT_REF, "v0.3.1")
+        self.assertEqual(bootstrap.PRODUCT_REF, "v0.3.2")
 
     def test_rejects_old_release_even_when_file_shape_matches(self) -> None:
         with tempfile.TemporaryDirectory(prefix="mega-recorder-bootstrap-test-") as temporary:
@@ -56,7 +56,7 @@ class BootstrapTests(unittest.TestCase):
 
     def test_accepts_dirty_compatible_checkout_without_touching_it(self) -> None:
         with tempfile.TemporaryDirectory(prefix="mega-recorder-bootstrap-test-") as temporary:
-            checkout = make_checkout(Path(temporary), "v0.3.1")
+            checkout = make_checkout(Path(temporary), "v0.3.2")
             subprocess.run(["git", "init", "-q"], cwd=checkout, check=True)
             subprocess.run(["git", "add", "."], cwd=checkout, check=True)
             subprocess.run(
@@ -73,7 +73,7 @@ class BootstrapTests(unittest.TestCase):
 
     def test_clean_checkout_cannot_claim_latest_release_with_a_stale_marker(self) -> None:
         with tempfile.TemporaryDirectory(prefix="mega-recorder-bootstrap-test-") as temporary:
-            checkout = make_checkout(Path(temporary), "v0.3.1")
+            checkout = make_checkout(Path(temporary), "v0.3.2")
             subprocess.run(["git", "init", "-q"], cwd=checkout, check=True)
             subprocess.run(["git", "add", "."], cwd=checkout, check=True)
             subprocess.run(
@@ -89,8 +89,8 @@ class BootstrapTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="mega-recorder-bootstrap-test-") as temporary:
             root = Path(temporary)
             old = make_checkout(root / "openscreen", "v0.3.0")
-            destination, details = bootstrap.choose_destination(root, "v0.3.1", False)
-            self.assertEqual(destination, root / "openscreen-v0.3.1")
+            destination, details = bootstrap.choose_destination(root, "v0.3.2", False)
+            self.assertEqual(destination, root / "openscreen-v0.3.2")
             self.assertTrue(old.is_dir())
             self.assertTrue(details["isolated"])
             self.assertEqual(details["preservedPath"], str(old))
@@ -98,7 +98,7 @@ class BootstrapTests(unittest.TestCase):
     def test_force_bootstrap_uses_default_destination_when_empty(self) -> None:
         with tempfile.TemporaryDirectory(prefix="mega-recorder-bootstrap-test-") as temporary:
             root = Path(temporary)
-            destination, details = bootstrap.choose_destination(root, "v0.3.1", True)
+            destination, details = bootstrap.choose_destination(root, "v0.3.2", True)
             self.assertEqual(destination, root / "openscreen")
             self.assertEqual(details, {})
 
