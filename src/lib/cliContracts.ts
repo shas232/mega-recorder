@@ -52,6 +52,8 @@ export interface CliRecordRequest {
 	durationMs: number | null;
 	/** When set, write a ready-to-export .openscreen project here after recording. */
 	projectOut: string | null;
+	/** When set, persist the confirmed source-clock reference as soon as capture starts. */
+	recordingClockPath: string | null;
 }
 
 export interface CliSourcesRequest {
@@ -103,6 +105,21 @@ export interface CliDoneResult {
 	cursorDataPath?: string;
 	projectPath?: string;
 	durationMs?: number;
+	/** Record: source-clock readiness reference captured at the real start edge. */
+	recordingClock?: {
+		schemaVersion: number;
+		kind: string;
+		ready: boolean;
+		status?: "recording" | "stopped";
+		clockId?: string;
+		startedAtEpochMs: number;
+		startedAtMonotonicMs?: number;
+		startedAtIso: string;
+		source: string;
+		precisionMs: number;
+		endedAtEpochMs?: number;
+		durationMs?: number;
+	};
 	/**
 	 * Record: a ready-to-save .openscreen project object built by the runner.
 	 * The main process writes it to the --project path (renderer has no fs).

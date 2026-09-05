@@ -4,6 +4,7 @@ import {
 	type AxcutDocument,
 	type AxcutTrimRange,
 	axcutSchemaVersion,
+	documentSchema,
 } from "../schema";
 import {
 	buildTimelineFromIntervals,
@@ -25,8 +26,13 @@ import {
 	timelineIntervals,
 } from "./timeline";
 
-function makeDoc(overrides: Partial<AxcutDocument> = {}): AxcutDocument {
-	return {
+type TestDocumentOverrides = Omit<Partial<AxcutDocument>, "timeline"> & {
+	timeline?: Partial<AxcutDocument["timeline"]>;
+};
+
+function makeDoc(overrides: TestDocumentOverrides = {}): AxcutDocument {
+	const { timeline: timelineOverrides, ...documentOverrides } = overrides;
+	const raw = {
 		schemaVersion: axcutSchemaVersion,
 		project: {
 			id: "proj_1",
@@ -54,12 +60,24 @@ function makeDoc(overrides: Partial<AxcutDocument> = {}): AxcutDocument {
 			muteRanges: [],
 			speedRanges: [],
 			captionRanges: [],
+			...timelineOverrides,
 		},
 		annotations: [],
+		overlays: [],
 		zoomRanges: [],
+		actions: [],
+		scenes: [],
 		legacyEditor: null,
-		...overrides,
+		...documentOverrides,
 	};
+	try {
+		return documentSchema.parse(raw);
+	} catch {
+		// A few cases intentionally feed malformed documents to the pure timeline
+		// guards; retain those invalid values after exercising schema defaults on
+		// the normal fixture path.
+		return raw as AxcutDocument;
+	}
 }
 
 describe("timeline pure functions", () => {

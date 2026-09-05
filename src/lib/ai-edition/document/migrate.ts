@@ -22,14 +22,17 @@ import type {
 	ZoomRegion,
 } from "@/components/video-editor/types";
 import type { ProjectMedia } from "@/lib/recordingSession";
+import { isIdentityCrop, normalizeCropRegion } from "../crop";
 import {
 	type AxcutAnnotationRegion,
 	type AxcutDocument,
 	type AxcutLegacyEditor,
+	type AxcutRecordingClock,
 	type AxcutTrimRange,
 	type AxcutZoomRegion,
 	documentSchema,
 	migrateRawDocumentToCurrent,
+	recordingClockSchema,
 } from "../schema";
 import { createId } from "./ids";
 
@@ -129,6 +132,10 @@ export function migrateProjectDataToAxcutDocument(
 	const annotationRegions: AnnotationRegion[] = Array.isArray(input.editor?.annotationRegions)
 		? input.editor.annotationRegions
 		: [];
+	// v2 kept one crop on the editor envelope. The current renderer owns crop
+	// framing per clip, so carry that legacy value onto the one migrated clip
+	// instead of leaving it stranded in legacyEditor where native export ignores it.
+	const legacyCropRegion = normalizeCropRegion(input.editor?.cropRegion);
 	// `audio attach` can enrich a legacy v2 project before it has been opened in
 	// the Axcut editor. Keep that track list in the legacy envelope at rest, then
 	// promote it into the first-class Axcut timeline on migration. The fallback
@@ -151,6 +158,12 @@ export function migrateProjectDataToAxcutDocument(
 		legacyInput.audioMixMode === "replace" || legacyEditorInput.audioMixMode === "replace"
 			? ("replace" as const)
 			: ("mix" as const);
+	const recordingClockResult = recordingClockSchema.safeParse(
+		(input as EditorProjectData & { recordingClock?: unknown }).recordingClock,
+	);
+	const recordingClock: AxcutRecordingClock | undefined = recordingClockResult.success
+		? recordingClockResult.data
+		: undefined;
 
 	const clip = primaryAssetId
 		? {
@@ -162,6 +175,7 @@ export function migrateProjectDataToAxcutDocument(
 				wordRefs: [] as string[],
 				origin: "system" as const,
 				reason: "migrated from v2",
+				...(isIdentityCrop(legacyCropRegion) ? {} : { cropRegion: legacyCropRegion }),
 			}
 		: null;
 
@@ -275,6 +289,7 @@ export function migrateProjectDataToAxcutDocument(
 		},
 		annotations: migratedAnnotations,
 		zoomRanges: migratedZoomRanges,
+		...(recordingClock ? { recordingClock } : {}),
 		legacyEditor,
 	};
 
@@ -386,5 +401,6 @@ export function migrateAxcutDocumentToProjectData(input: AxcutDocument): EditorP
 		...(media ? { media } : {}),
 		editor,
 		...(primary ? { videoPath: primary.originalPath } : {}),
+		...(document.recordingClock ? { recordingClock: document.recordingClock } : {}),
 	};
 }

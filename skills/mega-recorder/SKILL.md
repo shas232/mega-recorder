@@ -14,6 +14,7 @@ The editor supports a visible narration/audio lane, timed title/label/callout/lo
 Read the brief, audience, source media, and requested user journey before recording. Make a short scene manifest that names each scene, its source-time span or intended action, and the treatment selected for it. Choose the smallest set that makes the story clear, and record that choice in the handoff. Revisit the decision after inspecting the first take; do not silently add decoration that changes the meaning or pacing.
 
 - **Computer-use tracking** is useful for instructional or product walkthroughs where the viewer must understand what the operator did. Use the host's real computer-use controls and track only meaningful user actions. It is unnecessary for passive footage, a talking-head segment, or a visual montage.
+  For recordings that show an editable pointer, use controls that move/click the actual OS cursor. DOM-only browser clicks may activate a control without moving the physical pointer; confirm cursor telemetry records the chosen control method in a short take before recording the full journey.
 - **Cursor movement and click capture** are useful when the pointer is part of the explanation. Record with an editable cursor whenever possible so native cursor telemetry can drive continuous movement, pointer-shape changes, and click effects. Use action markers for important semantic clicks, not for every sampled move. If native telemetry is unavailable, action points can locate those discrete events, but they do not recreate a continuous cursor path; report that limitation.
 - **Labels and callouts** are useful for naming a control, field, result, or concept that would otherwise be missed. Label the few moments that carry the explanation, keep wording concise, and avoid a callout on every click.
 - **Zoom and framing** are useful when the target is small, dense, or otherwise hard to read. Focus on the actual target while keeping enough context to orient the viewer. Skip or reduce zoom for already-legible content, faces, slides, or scenes where continuity matters more than detail. Do not let automatic zoom suggestions decide the treatment without review.
@@ -22,25 +23,40 @@ Read the brief, audience, source media, and requested user journey before record
 
 The decision is part of the deliverable: state what was enabled, what was intentionally skipped, and why. A polished video may use only one or two of these treatments.
 
+## Browser framing and visual defaults
+
+For product demonstrations, apply the `blue-studio` preset to the working project unless the user requests another look: blue blurred background, a centered framed recording, and a visible editable cursor. Review automatic zooms and remove distracting ones. Preserve explicit user choices when revising an existing video instead of reapplying the preset over them.
+
+If the user says to hide the browser top bar, address it in the recorded footage: inspect the source frame, measure where browser chrome ends and page content begins, and persist a source crop that excludes the tab strip/address bar. Browser window height, Retina scaling, bookmarks bars, and fullscreen mode vary; never assume a fixed toolbar height. Keep the website's own navigation unless the user also asks to remove it. Cropping is spatial and must not trim time or remove audio.
+
+Use the existing renderer's crop controls/CLI on a sibling project and export a new video. Keep cursor telemetry and target coordinates in original source-frame coordinates, allowing the renderer's crop transform to place them; do not apply a second coordinate shift. Inspect the exported result at the start and at important clicks/zooms to confirm the bar is absent, the pointer still lands on its target, and labels remain readable. If browser geometry changes during the recording, inspect each affected scene and use separate scene clips/takes where one crop cannot fit all scenes.
+
+For a consistent source frame, `edit crop <project> --top <fraction> --output <revision.openscreen>` removes the measured top fraction of the original recording from every clip. For example, a measured 120-pixel toolbar in a 1200-pixel source frame means `--top 0.1`; this is an illustration, not a default. `--region x,y,width,height` specifies the normalized rectangle to retain. Add `--clip-id <id>` when different clips require different rectangles. Export the resulting project for the crop to appear in the delivered MP4.
+
 ## Record computer-use actions against the media clock
 
-When computer-use tracking is selected, establish the recording start and source frame geometry before driving the target flow. Start a semantic action manifest before capture and append an event immediately after each important successful action. Use the recording's source-media clock, not the wall-clock time when a screenshot or tool response arrived:
+When computer-use tracking is selected, establish the recording start and source frame geometry before driving the target flow. Pass `--clock-file <take.clock.json>` to `record`; wait for its ready reference before driving the flow. Start a semantic action manifest and append an event immediately after each important successful action. `--time auto --clock-file <take.clock.json>` derives an approximate source time from the recording reference; tool latency means this is not an exact click time. Use explicit `--time` for known source-media timestamps:
 
 ```sh
-node "$REPO/scripts/mega-recorder-cli.mjs" actions start --output "$ACTION_MANIFEST"
+node "$REPO/scripts/mega-recorder-cli.mjs" actions start \
+	--output "$ACTION_MANIFEST" --clock-file "$TAKE_CLOCK"
 node "$REPO/scripts/mega-recorder-cli.mjs" actions add "$ACTION_MANIFEST" \
   --time 12.4 --label "Click Save" --point 0.72,0.31
 node "$REPO/scripts/mega-recorder-cli.mjs" actions add "$ACTION_MANIFEST" \
-  --time 18.1 --label "Open reconciliation" --rect 0.58,0.12,0.24,0.08
+	--time 18.1 --label "Open reconciliation" --rect 0.58,0.12,0.24,0.08
 ```
 
-Use a normalized point (`x,y`, both 0–1) for a click or other precise target, or a normalized target rectangle (`x,y,width,height`, all 0–1) for a control or region. Normalize against the captured source frame before wallpaper, padding, zoom, or export framing; never copy coordinates from a downscaled preview without mapping them back to that frame. Labels should describe the action the viewer needs to understand and should stay stable across retries. If the computer-use tool returns an event timestamp or target rectangle, retain it; otherwise derive the timestamp from the same monotonic recording-start reference used for the take.
+After stopping the take, run `actions reconcile "$ACTION_MANIFEST" --recording <source.mp4> --output <take.reconciled.actions.json>` before applying markers. This matches approximate events to nearby native click samples by time and position, preserving unmatched events as approximate. It does not reconstruct events that were never recorded. A stopped recording clock must not be reused for a new take. Inspect the reconciled actions around important clicks and revise any ambiguous matches against the footage.
+
+Use a normalized point (`x,y`, both 0–1) for a click or other precise target, or a normalized target rectangle (`x,y,width,height`, all 0–1) for a control or region. Normalize against the captured source frame before wallpaper, padding, zoom, or export framing; never copy coordinates from a downscaled preview without mapping them back to that frame. Labels should describe the action the viewer needs to understand and should stay stable across retries. If the computer-use tool returns an event timestamp or target rectangle, retain it; otherwise use the take's recording-clock helper. Do not subtract monotonic timestamps from different processes, whose clock origins may differ.
 
 Use `--cursor editable-overlay` for recordings whose cursor should remain editable (it is the normal/default path). Preserve and inspect the resulting `<video>.cursor.json` sidecar. When native telemetry is readable, it is the source of truth for continuous cursor motion, pointer shape, and actual click/interaction samples. The semantic action manifest remains the source of truth for important labels and target points/rectangles. When native telemetry is absent or unreadable, use timestamped action points/rectangles as a sparse fallback at meaningful cursor destinations and for callouts or framing; do not claim that this fallback is continuous motion or a captured click pulse. A system cursor baked into the video cannot be restyled or retimed independently.
 
 After capture, check that each action is in the intended source-time scene and that its point/rectangle lands on the target. Do not apply actions from a different take or rely on screenshot arrival order to infer timing.
 
 ## Keep rendered effects synchronized
+
+Persist named scenes with stable IDs using `scenes start`, `scenes add`, and `scenes apply`. Give each scene its source-time range and narration copy. Use `scenes list` to resolve a later request such as "change the reconciliation section" and `scenes revise <project> --scene-id <id> --text <copy> --output <revision>` to keep its identity while revising it. A scene's copy is metadata; changing it alone does not regenerate speech. Generate revised local Kokoro audio, replace the scene's previous narration track rather than stacking duplicates, and verify the new track against the surviving scene intervals after cuts. Label narration tracks with their stable scene ID so they remain identifiable. Preserve other scenes and their audio unless the user's requested change affects them.
 
 Apply action markers using the same source-time manifest that was collected during capture. Generated callouts and cursor-focused framing must be anchored to the action they explain; the rendered cursor and click effect must come from the telemetry sample at that action, not from a guessed nearby time. A semantic marker can generate a label or focus region, but it cannot manufacture missing native cursor motion or click telemetry.
 
@@ -66,7 +82,7 @@ The shared artifact remains this one `SKILL.md`; `agents/openai.yaml` and the he
 ## Product source and bootstrap
 
 - Canonical repository: `https://github.com/shas232/mega-recorder.git`
-- Pinned release: `v0.3.0` (use this tag unless the user explicitly requests another ref)
+- Pinned release: `v0.3.1` (use this tag unless the user explicitly requests another ref)
 - Per-user default checkout: `${MEGA_RECORDER_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/mega-recorder}/openscreen`
 
 1. Locate a valid existing checkout from `MEGA_RECORDER_HOME`, a configured product path, the current directory/ancestors, or generic home-relative locations. A valid checkout has `package.json` and `scripts/mega-recorder-cli.mjs`.
@@ -75,11 +91,11 @@ The shared artifact remains this one `SKILL.md`; `agents/openai.yaml` and the he
    ```sh
    MEGA_RECORDER_ROOT="${MEGA_RECORDER_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/mega-recorder}"
    mkdir -p "$MEGA_RECORDER_ROOT"
-   git clone --branch v0.3.0 --depth 1 https://github.com/shas232/mega-recorder.git "$MEGA_RECORDER_ROOT/openscreen"
+   git clone --branch v0.3.1 --depth 1 https://github.com/shas232/mega-recorder.git "$MEGA_RECORDER_ROOT/openscreen"
    ```
 
    Never clone over an existing directory or choose an arbitrary user path. Set `REPO` to the resolved checkout for all later commands.
-3. Run the checkout's `skills/mega-recorder/scripts/bootstrap.py --repo "$REPO" --ref v0.3.0 --no-bootstrap --json` to validate discovery. On first use, or whenever the checkout has no usable Node runtime, run `npm ci` in `REPO`; verify that `node_modules/.bin/electron` and the Electron distribution under `node_modules/electron/dist` exist, then run `npm rebuild electron --force` if the runtime is missing or corrupt. Build the app runtime with `npm run build-vite` when `dist/` or `dist-electron/` is absent. Run `doctor.py --repo "$REPO" --json` after setup and before native capture/export. Treat doctor output as evidence, not proof that recording or export succeeded.
+3. Verify the checkout's `mega-recorder.manifest.json` declares `productRelease: "v0.3.1"` and the crop, scenes, and recording-clock helpers exist before running its bootstrap helper. If the checkout is older, keep it intact and clone the pinned release into an unused sibling directory, then set `REPO` to that directory. Run `python3 "$REPO/skills/mega-recorder/scripts/bootstrap.py" --repo "$REPO" --ref v0.3.1 --no-bootstrap --json` to validate compatibility. Inspect its runtime report; install missing prerequisites using available official package managers, then run `npm ci` when dependencies are missing. Verify `node_modules/.bin/electron` and `node_modules/electron/dist` exist; run `npm rebuild electron --force` if the Electron runtime is missing or corrupt. Build with `npm run build-vite` after installation or a source update. Run `doctor.py --repo "$REPO" --json` before native capture/export. A missing operating-system permission may require the user's one-time interaction; do not claim setup is complete without the required tools.
 4. Before every `record` or `export` on macOS, install the native payloads from the pinned upstream release with `python3 "$REPO/skills/mega-recorder/scripts/native_setup.py" --repo "$REPO" --ensure --json`, then rerun `doctor.py`. The helper detects arm64/x64, verifies the official archive SHA-256, extracts only the required signed ScreenCaptureKit/compositor/FFmpeg files into the checkout, and never reads `/Applications/Openscreen.app`. If the host is not a supported macOS architecture, leave native capture/export unverified and report the structured error.
 
 The repository contains the deterministic helpers and product assets needed after cloning: `bootstrap.py`, `doctor.py`, `kokoro_setup.py`, `install_skill.py`, `smoke.py`, and the bundled upstream-to-product patch. Do not require those files before the initial clone.

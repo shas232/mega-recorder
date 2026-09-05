@@ -17,6 +17,7 @@ from pathlib import Path
 
 
 SAMPLE_RATE = 24000
+DEFAULT_VOICE = "af_sky"
 
 
 def emit(payload: dict) -> None:
@@ -117,7 +118,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--doctor", action="store_true")
     parser.add_argument("--synthesize", action="store_true")
-    parser.add_argument("--voice", default="af_heart")
+    parser.add_argument("--voice", default=DEFAULT_VOICE)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--sample-rate", type=int, default=SAMPLE_RATE)
     args = parser.parse_args()

@@ -11,12 +11,20 @@ import {
 	ACTION_MANIFEST_SCHEMA_VERSION,
 	addActionToManifest,
 	applyActionsToDocument,
+	findCursorTelemetryClick,
 	normalizeActionManifest,
 	readActionManifest,
 	startActionManifest,
 	writeActionManifest,
 } from "./mega-recorder/actions.mjs";
 import { createBrowserEditorServer } from "./mega-recorder/browser-editor-server.mjs";
+import {
+	applyCropToDocument,
+	cropRegionFromEdges,
+	isIdentityCrop,
+	normalizeCropRegion,
+	parseCropRegion,
+} from "./mega-recorder/crop.mjs";
 import {
 	KOKORO_MODEL_ID,
 	KOKORO_SAMPLE_RATE,
@@ -39,6 +47,19 @@ import {
 	validateOverlay,
 } from "./mega-recorder/overlays.mjs";
 import { applyPresetToProject, getPreset, listPresets } from "./mega-recorder/preset.mjs";
+import {
+	readRecordingClock,
+	timestampFromRecordingClock,
+} from "./mega-recorder/recording-clock.mjs";
+import {
+	addSceneToManifest,
+	applyScenesToDocument,
+	normalizeSceneManifest,
+	readSceneManifest,
+	reviseSceneInManifest,
+	startSceneManifest,
+	writeSceneManifest,
+} from "./mega-recorder/scenes.mjs";
 import { deleteRangeFromDocument, writeDocumentAtomically } from "./mega-recorder/timeline.mjs";
 import { probeMedia, verifyMedia } from "./mega-recorder/verify.mjs";
 
@@ -58,12 +79,19 @@ const USAGE = [
 	"  mega-recorder kokoro doctor",
 	"  mega-recorder kokoro synthesize (--text <text> | --text-file <file>) [options]",
 	"  mega-recorder verify <media> [options]",
-	"  mega-recorder actions start [project] --output <manifest>",
-	"  mega-recorder actions add <manifest> --time <seconds> --label <text> (--point <x,y> | --rect <x,y,w,h>) [--output <manifest>]",
+	"  mega-recorder actions start [project] --output <manifest> [--clock-file <file>]",
+	"  mega-recorder actions add <manifest> --time <seconds|auto> --label <text> (--point <x,y> | --rect <x,y,w,h>) [--clock-file <file>] [--recording <video>] [--output <manifest>]",
+	"  mega-recorder actions reconcile <manifest> --recording <video> [--output <manifest>] [--tolerance-ms <ms>]",
 	"  mega-recorder actions list <manifest>",
 	"  mega-recorder actions import <manifest> --output <manifest>",
 	"  mega-recorder actions apply <project> --manifest <manifest> [--output <file> | --in-place] [--callouts]",
+	"  mega-recorder scenes start [project] --output <manifest> [--clock-file <file>]",
+	"  mega-recorder scenes add <manifest> --name <name> --start <seconds> --end <seconds> [--text <text>] [--id <id>] [--audio-track-ids <ids>] [--overlay-ids <ids>]",
+	"  mega-recorder scenes list <manifest>",
+	"  mega-recorder scenes apply <project> --manifest <manifest> [--output <file> | --in-place]",
+	"  mega-recorder scenes revise <project> --scene-id <id> [--name <name>] [--start <seconds>] [--end <seconds>] [--text <text>] [--output <file> | --in-place]",
 	"  mega-recorder edit <project> [--port <port>]  (browser editor; localhost only)",
+	"  mega-recorder edit crop <project> (--region <x,y,w,h> | edge flags) [--clip-id <id>] [--output <file> | --in-place]",
 	"  mega-recorder edit delete <project> --start <seconds> --end <seconds> [--output <file> | --in-place]",
 	"  mega-recorder edit overlay add <project> --start <seconds> --end <seconds> --text <text> [--type title|label|callout|lower-third] [options]",
 	"  mega-recorder edit overlay list <project>",
@@ -195,6 +223,20 @@ function numberValue(parsed, names, label, { integer = false, min = 0 } = {}) {
 		});
 	}
 	return value;
+}
+
+function idListValue(parsed, names, label) {
+	const raw = optionValue(parsed, ...names);
+	if (raw === undefined) return undefined;
+	const values = raw
+		.split(",")
+		.map((value) => value.trim())
+		.filter(Boolean);
+	if (values.length === 0)
+		throw Object.assign(new Error(`${label} must contain at least one id`), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	return [...new Set(values)];
 }
 
 async function readJson(filePath) {
@@ -645,13 +687,32 @@ function coordinateList(raw, count, label) {
 	return values;
 }
 
-function actionFromParsed(parsed) {
+function actionFromParsed(parsed, timing = {}) {
 	const time = optionValue(parsed, "--time", "--timestamp", "--timestamp-sec");
 	const label = requiredValue(parsed, ["--label"], "--label");
-	if (time === undefined) {
+	const autoTime = time === "auto" || parsed.flags.has("--auto-time");
+	if (time === undefined && !autoTime) {
 		throw Object.assign(new Error("actions add requires --time"), { code: "CLI_ARGUMENT_ERROR" });
 	}
-	const action = { timestampSec: Number(time), label };
+	if (autoTime && timing.timestampSec === undefined) {
+		throw Object.assign(
+			new Error(
+				"actions add --time auto requires a recording clock (--clock-file) or a finished recording with cursor telemetry (--recording)",
+			),
+			{ code: "CLI_ARGUMENT_ERROR" },
+		);
+	}
+	const action = {
+		timestampSec: autoTime ? timing.timestampSec : Number(time),
+		label,
+		...(autoTime && timing.timestampSource ? { timestampSource: timing.timestampSource } : {}),
+		...(autoTime && timing.timestampAccuracy
+			? { timestampAccuracy: timing.timestampAccuracy }
+			: {}),
+		...(autoTime && timing.observedAtEpochMs !== undefined
+			? { observedAtEpochMs: timing.observedAtEpochMs }
+			: {}),
+	};
 	const point = optionValue(parsed, "--point");
 	const rect = optionValue(parsed, "--rect", "--target-rect");
 	if (point !== undefined && rect !== undefined)
@@ -677,6 +738,76 @@ function actionFromParsed(parsed) {
 	return action;
 }
 
+async function resolveAutoActionTiming(parsed, manifestPath, manifest) {
+	const time = optionValue(parsed, "--time", "--timestamp", "--timestamp-sec");
+	const autoTime = time === "auto" || parsed.flags.has("--auto-time");
+	if (!autoTime) return {};
+	const observedAtEpochMs = Date.now();
+	const pointValue = optionValue(parsed, "--point");
+	const rectValue = optionValue(parsed, "--rect", "--target-rect");
+	const target =
+		pointValue !== undefined
+			? {
+					point: (() => {
+						const [x, y] = coordinateList(pointValue, 2, "--point");
+						return { x, y };
+					})(),
+				}
+			: rectValue !== undefined
+				? {
+						targetRect: (() => {
+							const [x, y, width, height] = coordinateList(rectValue, 4, "--rect");
+							return { x, y, width, height };
+						})(),
+					}
+				: {};
+	const recordingValue = optionValue(parsed, "--recording", "--media");
+	const recordingPath = recordingValue ? expandPath(recordingValue) : null;
+	const clockValue =
+		optionValue(parsed, "--clock-file", "--recording-clock") ?? manifest.recordingClockPath;
+	const clockPath = clockValue === undefined ? undefined : expandPath(clockValue);
+	const clock = clockPath === undefined ? null : await readRecordingClock(clockPath);
+	if (clock?.status === "stopped") {
+		throw Object.assign(
+			new Error(
+				"actions add --time auto cannot use a stopped recording clock; provide an explicit --time value for post-processing",
+			),
+			{ code: "ACTION_CLOCK_STOPPED" },
+		);
+	}
+	if (recordingPath) {
+		const click = await findCursorTelemetryClick(recordingPath, target, {
+			expectedTimeMs:
+				clock === null
+					? undefined
+					: timestampFromRecordingClock(clock, { epochMs: observedAtEpochMs }) * 1000,
+		});
+		if (click) {
+			return {
+				timestampSec: click.timeMs / 1000,
+				timestampSource: "cursor-telemetry",
+				timestampAccuracy: "exact",
+				observedAtEpochMs,
+			};
+		}
+	}
+	if (clock === null || clockPath === undefined) {
+		throw Object.assign(
+			new Error(
+				"actions add --time auto requires --clock-file or a finished recording with native click telemetry (--recording)",
+			),
+			{ code: "ACTION_CLOCK_MISSING" },
+		);
+	}
+	return {
+		timestampSec: timestampFromRecordingClock(clock, { epochMs: observedAtEpochMs }),
+		timestampSource: "recording-clock",
+		timestampAccuracy: "approximate",
+		observedAtEpochMs,
+		clockPath,
+	};
+}
+
 async function actionsCommand(tokens) {
 	const actionName = tokens.shift() ?? "list";
 	const command = `actions ${actionName}`;
@@ -684,7 +815,17 @@ async function actionsCommand(tokens) {
 		const parsed = parseTokens(tokens);
 		validateParsedOptions(
 			parsed,
-			new Set(["--output", "--out", "-o", "--project", "-p", "--project-id", "--asset-id"]),
+			new Set([
+				"--output",
+				"--out",
+				"-o",
+				"--project",
+				"-p",
+				"--project-id",
+				"--asset-id",
+				"--clock-file",
+				"--recording-clock",
+			]),
 			command,
 		);
 		validateRequiredValueOptions(
@@ -701,7 +842,9 @@ async function actionsCommand(tokens) {
 			projectId ??= source.project?.id;
 			assetId ??= source.project?.primaryAssetId ?? source.assets?.[0]?.id;
 		}
-		const manifest = startActionManifest({ projectId, assetId });
+		const recordingClockValue = optionValue(parsed, "--clock-file", "--recording-clock");
+		const recordingClockPath = recordingClockValue ? expandPath(recordingClockValue) : undefined;
+		const manifest = startActionManifest({ projectId, assetId, recordingClockPath });
 		const outputPath = expandPath(optionValue(parsed, "--output", "--out", "-o") ?? "actions.json");
 		await writeActionManifest(outputPath, manifest);
 		return result(command, {
@@ -709,6 +852,7 @@ async function actionsCommand(tokens) {
 			schemaVersion: ACTION_MANIFEST_SCHEMA_VERSION,
 			projectId: manifest.projectId ?? null,
 			assetId: manifest.assetId ?? null,
+			recordingClockPath: manifest.recordingClockPath ?? null,
 			actionCount: 0,
 		});
 	}
@@ -726,6 +870,11 @@ async function actionsCommand(tokens) {
 				"--target-rect",
 				"--scene-id",
 				"--id",
+				"--clock-file",
+				"--recording-clock",
+				"--recording",
+				"--media",
+				"--auto-time",
 				"--output",
 				"--out",
 				"-o",
@@ -744,6 +893,10 @@ async function actionsCommand(tokens) {
 				"--target-rect",
 				"--scene-id",
 				"--id",
+				"--clock-file",
+				"--recording-clock",
+				"--recording",
+				"--media",
 				"--output",
 				"--out",
 				"-o",
@@ -757,16 +910,89 @@ async function actionsCommand(tokens) {
 				code: "CLI_ARGUMENT_ERROR",
 			});
 		const manifestPath = expandPath(manifestValue);
-		const next = addActionToManifest(
-			await readActionManifest(manifestPath),
-			actionFromParsed(parsed),
-		);
+		const current = await readActionManifest(manifestPath);
+		const timing = await resolveAutoActionTiming(parsed, manifestPath, current);
+		const next = addActionToManifest(current, actionFromParsed(parsed, timing));
 		const outputPath = expandPath(optionValue(parsed, "--output", "--out", "-o") ?? manifestPath);
 		await writeActionManifest(outputPath, next);
 		return result(command, {
 			manifestPath: outputPath,
 			action: next.actions.at(-1),
 			actionCount: next.actions.length,
+		});
+	}
+	if (actionName === "reconcile") {
+		const parsed = parseTokens(tokens);
+		validateParsedOptions(
+			parsed,
+			new Set(["--recording", "--media", "--output", "--out", "-o", "--tolerance-ms"]),
+			command,
+		);
+		validateRequiredValueOptions(
+			parsed,
+			["--recording", "--media", "--output", "--out", "-o", "--tolerance-ms"],
+			command,
+		);
+		validatePositionalCount(parsed, 1, command);
+		const manifestValue = parsed.positional[0];
+		if (!manifestValue)
+			throw Object.assign(new Error("actions reconcile requires a manifest path"), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		const recordingValue = optionValue(parsed, "--recording", "--media");
+		if (!recordingValue)
+			throw Object.assign(new Error("actions reconcile requires --recording <video>"), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		const manifestPath = expandPath(manifestValue);
+		const recordingPath = expandPath(recordingValue);
+		const current = await readActionManifest(manifestPath);
+		const clockPath = current.recordingClockPath;
+		const clock = clockPath ? await readRecordingClock(clockPath) : null;
+		const toleranceMs =
+			numberValue(parsed, ["--tolerance-ms"], "--tolerance-ms", { min: 1 }) ?? 1_500;
+		let reconciledCount = 0;
+		const unmatchedActionIds = [];
+		const actions = await Promise.all(
+			current.actions.map(async (action) => {
+				if (
+					action.timestampAccuracy !== "approximate" &&
+					action.timestampSource !== "recording-clock"
+				) {
+					return action;
+				}
+				// Without the persisted recording clock, an observed epoch has no
+				// source-time origin. Keep the manifest's previously derived source
+				// timestamp rather than silently turning it into 0ms.
+				const expectedTimeMs =
+					clock && action.observedAtEpochMs !== undefined
+						? action.observedAtEpochMs - clock.startedAtEpochMs
+						: action.timestampSec * 1000;
+				const click = await findCursorTelemetryClick(recordingPath, action, {
+					expectedTimeMs,
+					toleranceMs,
+				});
+				if (!click) {
+					unmatchedActionIds.push(action.id);
+					return action;
+				}
+				reconciledCount += 1;
+				return {
+					...action,
+					timestampSec: click.timeMs / 1000,
+					timestampSource: "cursor-telemetry",
+					timestampAccuracy: "exact",
+				};
+			}),
+		);
+		const next = normalizeActionManifest({ ...current, actions });
+		const outputPath = expandPath(optionValue(parsed, "--output", "--out", "-o") ?? manifestPath);
+		await writeActionManifest(outputPath, next);
+		return result(command, {
+			manifestPath: outputPath,
+			actionCount: next.actions.length,
+			reconciledCount,
+			unmatchedActionIds,
 		});
 	}
 	if (actionName === "list") {
@@ -867,7 +1093,307 @@ async function actionsCommand(tokens) {
 	});
 }
 
-function editOutputPath(projectPath, parsed) {
+async function scenesCommand(tokens) {
+	const actionName = tokens.shift() ?? "list";
+	const command = `scenes ${actionName}`;
+	if (actionName === "start") {
+		const parsed = parseTokens(tokens);
+		validateParsedOptions(
+			parsed,
+			new Set([
+				"--output",
+				"--out",
+				"-o",
+				"--project",
+				"-p",
+				"--project-id",
+				"--asset-id",
+				"--clock-file",
+				"--recording-clock",
+			]),
+			command,
+		);
+		validateRequiredValueOptions(
+			parsed,
+			[
+				"--output",
+				"--out",
+				"-o",
+				"--project",
+				"-p",
+				"--project-id",
+				"--asset-id",
+				"--clock-file",
+				"--recording-clock",
+			],
+			command,
+		);
+		validatePositionalCount(parsed, 1, command);
+		const projectValue = optionValue(parsed, "--project", "-p") ?? parsed.positional[0];
+		let projectId = optionValue(parsed, "--project-id");
+		let assetId = optionValue(parsed, "--asset-id");
+		if (projectValue) {
+			const source = await readJson(expandPath(projectValue));
+			projectId ??= source.project?.id;
+			assetId ??= source.project?.primaryAssetId ?? source.assets?.[0]?.id;
+		}
+		const recordingClockValue = optionValue(parsed, "--clock-file", "--recording-clock");
+		const manifest = startSceneManifest({
+			projectId,
+			assetId,
+			recordingClockPath: recordingClockValue ? expandPath(recordingClockValue) : undefined,
+		});
+		const outputPath = expandPath(optionValue(parsed, "--output", "--out", "-o") ?? "scenes.json");
+		await writeSceneManifest(outputPath, manifest);
+		return result(command, {
+			manifestPath: outputPath,
+			schemaVersion: 1,
+			projectId: manifest.projectId ?? null,
+			assetId: manifest.assetId ?? null,
+			recordingClockPath: manifest.recordingClockPath ?? null,
+			sceneCount: 0,
+		});
+	}
+	if (actionName === "add") {
+		const parsed = parseTokens(tokens);
+		validateParsedOptions(
+			parsed,
+			new Set([
+				"--name",
+				"--title",
+				"--start",
+				"--end",
+				"--text",
+				"--copy",
+				"--script",
+				"--id",
+				"--audio-track-ids",
+				"--overlay-ids",
+				"--output",
+				"--out",
+				"-o",
+			]),
+			command,
+		);
+		validateRequiredValueOptions(
+			parsed,
+			[
+				"--name",
+				"--title",
+				"--start",
+				"--end",
+				"--text",
+				"--copy",
+				"--script",
+				"--id",
+				"--audio-track-ids",
+				"--overlay-ids",
+				"--output",
+				"--out",
+				"-o",
+			],
+			command,
+		);
+		validatePositionalCount(parsed, 1, command);
+		const manifestValue = parsed.positional[0];
+		if (!manifestValue)
+			throw Object.assign(new Error("scenes add requires a manifest path"), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		const manifestPath = expandPath(manifestValue);
+		const current = await readSceneManifest(manifestPath);
+		const startSec = numberValue(parsed, ["--start"], "--start", { min: 0 });
+		const endSec = numberValue(parsed, ["--end"], "--end", { min: 0 });
+		if (startSec === undefined || endSec === undefined || endSec <= startSec)
+			throw Object.assign(new Error("scenes add requires --end greater than --start"), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		const scene = {
+			id: optionValue(parsed, "--id") ?? undefined,
+			name: requiredValue(parsed, ["--name", "--title"], "--name"),
+			startSec,
+			endSec,
+			text: optionValue(parsed, "--text", "--copy", "--script") ?? "",
+			audioTrackIds: idListValue(parsed, ["--audio-track-ids"], "--audio-track-ids") ?? [],
+			overlayIds: idListValue(parsed, ["--overlay-ids"], "--overlay-ids") ?? [],
+		};
+		const next = addSceneToManifest(current, scene);
+		const outputPath = expandPath(optionValue(parsed, "--output", "--out", "-o") ?? manifestPath);
+		await writeSceneManifest(outputPath, next);
+		return result(command, {
+			manifestPath: outputPath,
+			scene: next.scenes.find((item) => item.id === scene.id) ?? next.scenes.at(-1),
+			sceneCount: next.scenes.length,
+		});
+	}
+	if (actionName === "list") {
+		const parsed = parseTokens(tokens);
+		validateParsedOptions(parsed, new Set(), command);
+		validatePositionalCount(parsed, 1, command);
+		const manifestValue = parsed.positional[0];
+		if (!manifestValue)
+			throw Object.assign(new Error("scenes list requires a manifest path"), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		const manifestPath = expandPath(manifestValue);
+		const manifest = await readSceneManifest(manifestPath);
+		return result(command, {
+			manifestPath,
+			manifest,
+			scenes: manifest.scenes,
+			sceneCount: manifest.scenes.length,
+		});
+	}
+	if (actionName === "import") {
+		const parsed = parseTokens(tokens);
+		validateParsedOptions(parsed, new Set(["--output", "--out", "-o"]), command);
+		validateRequiredValueOptions(parsed, ["--output", "--out", "-o"], command);
+		validatePositionalCount(parsed, 1, command);
+		const inputValue = parsed.positional[0];
+		if (!inputValue)
+			throw Object.assign(new Error("scenes import requires an input path"), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		const inputPath = expandPath(inputValue);
+		const outputPath = expandPath(
+			optionValue(parsed, "--output", "--out", "-o") ?? "scenes.imported.json",
+		);
+		const manifest = normalizeSceneManifest(await readJson(inputPath));
+		await writeSceneManifest(outputPath, manifest);
+		return result(command, {
+			inputPath,
+			manifestPath: outputPath,
+			sceneCount: manifest.scenes.length,
+		});
+	}
+	if (actionName === "apply") {
+		const parsed = parseTokens(tokens);
+		validateParsedOptions(
+			parsed,
+			new Set(["--manifest", "--output", "--out", "-o", "--in-place"]),
+			command,
+		);
+		validateRequiredValueOptions(parsed, ["--manifest", "--output", "--out", "-o"], command);
+		validatePositionalCount(parsed, 1, command);
+		const projectValue = parsed.positional[0];
+		if (!projectValue)
+			throw Object.assign(new Error("scenes apply requires a project path"), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		const projectPath = expandPath(projectValue);
+		const manifestPath = expandPath(requiredValue(parsed, ["--manifest"], "--manifest"));
+		const document = await migrateLegacyProjectForCli(await readJson(projectPath));
+		const applied = applyScenesToDocument(document, await readSceneManifest(manifestPath));
+		const outputPath = editOutputPath(projectPath, parsed);
+		await fs.mkdir(path.dirname(outputPath), { recursive: true });
+		await writeDocumentAtomically(outputPath, applied.document);
+		const previousScenes = new Map((document.scenes ?? []).map((scene) => [scene.id, scene]));
+		const requiresNarrationSynthesis = applied.scenes.some(
+			(scene) => scene.text && scene.text !== previousScenes.get(scene.id)?.text,
+		);
+		return result(command, {
+			projectPath,
+			outputPath,
+			manifestPath,
+			sceneCount: applied.scenes.length,
+			changedSceneIds: applied.changedSceneIds,
+			mediaTouched: false,
+			narrationChanged: false,
+			requiresNarrationSynthesis,
+			needsNarrationRegeneration: requiresNarrationSynthesis,
+		});
+	}
+	if (actionName === "revise") {
+		const parsed = parseTokens(tokens);
+		validateParsedOptions(
+			parsed,
+			new Set([
+				"--scene-id",
+				"--name",
+				"--title",
+				"--start",
+				"--end",
+				"--text",
+				"--copy",
+				"--script",
+				"--audio-track-ids",
+				"--overlay-ids",
+				"--output",
+				"--out",
+				"-o",
+				"--in-place",
+			]),
+			command,
+		);
+		validateRequiredValueOptions(
+			parsed,
+			[
+				"--scene-id",
+				"--name",
+				"--title",
+				"--start",
+				"--end",
+				"--text",
+				"--copy",
+				"--script",
+				"--audio-track-ids",
+				"--overlay-ids",
+				"--output",
+				"--out",
+				"-o",
+			],
+			command,
+		);
+		validatePositionalCount(parsed, 1, command);
+		const projectValue = parsed.positional[0];
+		if (!projectValue)
+			throw Object.assign(new Error("scenes revise requires a project path"), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		const projectPath = expandPath(projectValue);
+		const document = await migrateLegacyProjectForCli(await readJson(projectPath));
+		const current = normalizeSceneManifest({
+			projectId: document.project?.id,
+			scenes: document.scenes ?? [],
+		});
+		const sceneId = requiredValue(parsed, ["--scene-id"], "--scene-id");
+		const patch = {};
+		const name = optionValue(parsed, "--name", "--title");
+		const text = optionValue(parsed, "--text", "--copy", "--script");
+		const audioTrackIds = idListValue(parsed, ["--audio-track-ids"], "--audio-track-ids");
+		const overlayIds = idListValue(parsed, ["--overlay-ids"], "--overlay-ids");
+		const start = numberValue(parsed, ["--start"], "--start", { min: 0 });
+		const end = numberValue(parsed, ["--end"], "--end", { min: 0 });
+		if (name !== undefined) patch.name = name;
+		if (text !== undefined) patch.text = text;
+		if (audioTrackIds !== undefined) patch.audioTrackIds = audioTrackIds;
+		if (overlayIds !== undefined) patch.overlayIds = overlayIds;
+		if (start !== undefined) patch.startSec = start;
+		if (end !== undefined) patch.endSec = end;
+		const revisedManifest = reviseSceneInManifest(current, sceneId, patch);
+		const applied = applyScenesToDocument(document, revisedManifest);
+		const outputPath = editOutputPath(projectPath, parsed, "scene-revised");
+		await fs.mkdir(path.dirname(outputPath), { recursive: true });
+		await writeDocumentAtomically(outputPath, applied.document);
+		const needsNarrationRegeneration =
+			text !== undefined && text !== current.scenes.find((scene) => scene.id === sceneId)?.text;
+		return result(command, {
+			projectPath,
+			outputPath,
+			scene: applied.scenes.find((item) => item.id === sceneId),
+			sceneCount: applied.scenes.length,
+			mediaTouched: false,
+			narrationChanged: false,
+			requiresNarrationSynthesis: needsNarrationRegeneration,
+			needsNarrationRegeneration,
+		});
+	}
+	throw Object.assign(new Error(`Unknown scenes command: ${actionName}`), {
+		code: "CLI_ARGUMENT_ERROR",
+	});
+}
+
+function editOutputPath(projectPath, parsed, suffix = "edited") {
 	const requested = optionValue(parsed, "--output", "--out", "-o");
 	const inPlace = parsed.flags.has("--in-place");
 	if (inPlace && requested !== undefined) {
@@ -879,10 +1405,78 @@ function editOutputPath(projectPath, parsed) {
 		? projectPath
 		: expandPath(
 				requested ??
-					`${projectPath.replace(/\.(openscreen|axcut)$/i, "")}.edited${path.extname(projectPath)}`,
+					`${projectPath.replace(/\.(openscreen|axcut)$/i, "")}.${suffix}${path.extname(projectPath)}`,
 			);
 	if (!inPlace) assertDistinctPath(outputPath, [projectPath], "Edit output");
 	return outputPath;
+}
+
+async function editCropCommand(tokens) {
+	const command = "edit crop";
+	const parsed = parseTokens(tokens);
+	const edgeNames = ["--top", "--right", "--bottom", "--left"];
+	validateParsedOptions(
+		parsed,
+		new Set(["--region", ...edgeNames, "--clip-id", "--output", "--out", "-o", "--in-place"]),
+		command,
+	);
+	validateRequiredValueOptions(
+		parsed,
+		["--region", ...edgeNames, "--clip-id", "--output", "--out", "-o"],
+		command,
+	);
+	validatePositionalCount(parsed, 1, command);
+	const projectValue = parsed.positional[0];
+	if (!projectValue) {
+		throw Object.assign(new Error(`${command} requires a project path`), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	}
+	const regionValue = optionValue(parsed, "--region");
+	const edgeValues = Object.fromEntries(
+		edgeNames.map((name) => [name.slice(2), numberValue(parsed, [name], name, { min: 0 })]),
+	);
+	const hasEdges = edgeNames.some((name) => optionValue(parsed, name) !== undefined);
+	if (regionValue !== undefined && hasEdges) {
+		throw Object.assign(new Error("Use either --region or crop edge flags, not both"), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	}
+	if (regionValue === undefined && !hasEdges) {
+		throw Object.assign(new Error(`${command} requires --region or at least one crop edge flag`), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	}
+	const cropRegion =
+		regionValue !== undefined ? parseCropRegion(regionValue) : cropRegionFromEdges(edgeValues);
+	const clipId = optionValue(parsed, "--clip-id") ?? null;
+	const projectPath = expandPath(projectValue);
+	const source = await readJson(projectPath);
+	const document = await migrateLegacyProjectForCli(source);
+	if (!Array.isArray(document.timeline?.clips) || document.timeline.clips.length === 0) {
+		throw Object.assign(new Error("Project timeline has no video clips to crop"), {
+			code: "PROJECT_TIMELINE_EMPTY",
+		});
+	}
+	if (clipId !== null && !document.timeline.clips.some((clip) => clip.id === clipId)) {
+		throw Object.assign(new Error(`Unknown clip id: ${clipId}`), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	}
+	const cropped = applyCropToDocument(document, cropRegion, clipId);
+	const outputPath = editOutputPath(projectPath, parsed, "cropped");
+	await fs.mkdir(path.dirname(outputPath), { recursive: true });
+	await writeDocumentAtomically(outputPath, cropped);
+	return result(command, {
+		operation: "crop",
+		projectPath,
+		outputPath,
+		cropRegion,
+		clipId,
+		clipCount: cropped.timeline.clips.length,
+		changed: cropped !== document,
+		mediaTouched: false,
+	});
 }
 
 async function editDeleteCommand(tokens) {
@@ -977,6 +1571,7 @@ async function migrateLegacyProjectForCli(source) {
 		});
 	}
 	const now = new Date().toISOString();
+	const legacyCropRegion = normalizeCropRegion(editor.cropRegion);
 	const projectId =
 		typeof legacy.project?.id === "string" ? legacy.project.id : `proj_${randomUUID()}`;
 	const assetId = `asset_${randomUUID()}`;
@@ -1026,6 +1621,7 @@ async function migrateLegacyProjectForCli(source) {
 		wordRefs: [],
 		origin: "system",
 		reason: "migrated from legacy .openscreen",
+		...(isIdentityCrop(legacyCropRegion) ? {} : { cropRegion: legacyCropRegion }),
 	};
 	const legacyAudioTracks = Array.isArray(legacy.audioTracks)
 		? legacy.audioTracks
@@ -1112,6 +1708,10 @@ async function migrateLegacyProjectForCli(source) {
 		overlays: [],
 		zoomRanges,
 		actions: [],
+		scenes: Array.isArray(legacy.scenes) ? legacy.scenes : [],
+		...(legacy.recordingClock && typeof legacy.recordingClock === "object"
+			? { recordingClock: legacy.recordingClock }
+			: {}),
 		legacyEditor: editor,
 	};
 }
@@ -1535,6 +2135,7 @@ async function audioAttachCommand(tokens) {
 }
 
 async function editCommand(tokens) {
+	if (tokens[0] === "crop") return editCropCommand(tokens.slice(1));
 	if (tokens[0] === "delete") return editDeleteCommand(tokens.slice(1));
 	if (tokens[0] === "overlay") return editOverlayCommand(tokens.slice(1));
 	const parsed = parseTokens(tokens);
@@ -1594,6 +2195,7 @@ async function editCommand(tokens) {
 		capabilities: {
 			inspection: true,
 			save: true,
+			crop: true,
 			rippleDelete: true,
 			nativeCapture: false,
 			export: false,
@@ -1709,6 +2311,7 @@ export async function runCommand(argv) {
 		}
 		if (root === "verify") return await verifyCommand(tokens);
 		if (root === "actions") return await actionsCommand(tokens);
+		if (root === "scenes") return await scenesCommand(tokens);
 		if (root === "edit") return await editCommand(tokens);
 		if (root === "audio") {
 			const action = tokens.shift() ?? "attach";

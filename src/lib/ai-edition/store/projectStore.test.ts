@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { documentSchema } from "../schema";
 import { useProjectStore } from "./projectStore";
 import { clearHistory, past, pushHistory } from "./undoStack";
 
@@ -33,7 +34,7 @@ vi.mock("sonner", () => ({
 	toast: { error: toastMocks.error },
 }));
 
-const sampleDoc = {
+const sampleDoc = documentSchema.parse({
 	// ponytail: the bridge contract after the migration hoist is v6 — every
 	// load site (DocumentService, browserShim) runs `migrateRawDocumentToCurrent`
 	// before returning, and the renderer's `parseDocument` is a pure v6
@@ -63,7 +64,7 @@ const sampleDoc = {
 	annotations: [],
 	zoomRanges: [],
 	legacyEditor: null,
-};
+});
 
 describe("useProjectStore", () => {
 	beforeEach(() => {

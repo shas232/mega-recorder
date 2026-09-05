@@ -1,0 +1,54 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://github.com/shas232/mega-recorder/schemas/mega-recorder-scene-manifest.schema.json",
+	"title": "MEGA RECORDER named scene manifest",
+	"type": "object",
+	"additionalProperties": false,
+	"required": ["schemaVersion", "scenes"],
+	"properties": {
+		"schemaVersion": { "const": 1 },
+		"projectId": { "type": "string", "minLength": 1 },
+		"assetId": { "type": "string", "minLength": 1 },
+		"recordingClockPath": { "type": "string", "minLength": 1 },
+		"scenes": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/scene" }
+		}
+	},
+	"$defs": {
+		"textMapping": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["actionId", "text"],
+			"properties": {
+				"actionId": { "type": "string", "minLength": 1, "maxLength": 160 },
+				"text": { "type": "string", "minLength": 1, "maxLength": 1000 }
+			}
+		},
+		"scene": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["id", "name", "startSec", "endSec", "text", "revision", "actionIds"],
+			"properties": {
+				"id": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 80,
+					"pattern": "^[A-Za-z0-9_-]+$"
+				},
+				"name": { "type": "string", "minLength": 1, "maxLength": 160 },
+				"startSec": { "type": "number", "minimum": 0 },
+				"endSec": { "type": "number", "exclusiveMinimum": 0 },
+				"text": { "type": "string", "maxLength": 2000 },
+				"revision": { "type": "integer", "minimum": 1 },
+				"actionIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+				"audioTrackIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+				"overlayIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+				"textMappings": {
+					"type": "array",
+					"items": { "$ref": "#/$defs/textMapping" }
+				}
+			}
+		}
+	}
+}

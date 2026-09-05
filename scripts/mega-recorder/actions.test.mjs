@@ -8,7 +8,9 @@ import {
 	applyActionsToDocument,
 	normalizeActionManifest,
 	startActionManifest,
+	writeActionManifest,
 } from "./actions.mjs";
+import { createRecordingClockReference, writeRecordingClock } from "./recording-clock.mjs";
 import { deleteRangeFromDocument } from "./timeline.mjs";
 
 function fixture() {
@@ -161,6 +163,225 @@ describe("host-agent action manifests", () => {
 			]);
 			expect(imported).toMatchObject({ ok: true, command: "actions import", actionCount: 1 });
 			expect(JSON.parse(await fs.readFile(importedPath, "utf8")).schemaVersion).toBe(1);
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("derives auto action time from the recording start clock, not manifest/tool arrival order", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "mega-recorder-actions-clock-"));
+		try {
+			const manifestPath = path.join(root, "actions.json");
+			const clockPath = path.join(root, "capture.clock.json");
+			await runCommand(["actions", "start", "--output", manifestPath, "--clock-file", clockPath]);
+			await writeRecordingClock(
+				clockPath,
+				createRecordingClockReference({ epochMs: Date.now() - 2_000, monotonicMs: 1 }),
+			);
+			const added = await runCommand([
+				"actions",
+				"add",
+				manifestPath,
+				"--time",
+				"auto",
+				"--label",
+				"Open menu",
+				"--point",
+				"0.2,0.3",
+			]);
+			expect(added).toMatchObject({
+				ok: true,
+				action: {
+					timestampSource: "recording-clock",
+					timestampAccuracy: "approximate",
+				},
+			});
+			expect(added.action.timestampSec).toBeGreaterThanOrEqual(1.9);
+			expect(added.action.timestampSec).toBeLessThan(3);
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("snaps auto action time only to a spatially matching native click", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "mega-recorder-actions-click-"));
+		try {
+			const manifestPath = path.join(root, "actions.json");
+			const mediaPath = path.join(root, "capture.mp4");
+			const clockPath = path.join(root, "capture.clock.json");
+			await fs.writeFile(
+				`${mediaPath}.cursor.json`,
+				JSON.stringify({
+					samples: [
+						{ timeMs: 1_250, cx: 0.2, cy: 0.3, interactionType: "click" },
+						{ timeMs: 2_000, cx: 0.2, cy: 0.3, interactionType: "click" },
+					],
+				}),
+			);
+			await writeRecordingClock(
+				clockPath,
+				createRecordingClockReference({ epochMs: Date.now() - 1_250, monotonicMs: 1 }),
+			);
+			await runCommand(["actions", "start", "--output", manifestPath, "--clock-file", clockPath]);
+			const added = await runCommand([
+				"actions",
+				"add",
+				manifestPath,
+				"--time",
+				"auto",
+				"--recording",
+				mediaPath,
+				"--clock-file",
+				clockPath,
+				"--label",
+				"Open menu",
+				"--point",
+				"0.2,0.3",
+			]);
+			expect(added.action).toMatchObject({
+				timestampSec: 1.25,
+				timestampSource: "cursor-telemetry",
+				timestampAccuracy: "exact",
+			});
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects auto timing after the recording clock is closed", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "mega-recorder-actions-stopped-"));
+		try {
+			const manifestPath = path.join(root, "actions.json");
+			const clockPath = path.join(root, "capture.clock.json");
+			await runCommand(["actions", "start", "--output", manifestPath, "--clock-file", clockPath]);
+			await writeRecordingClock(clockPath, {
+				...createRecordingClockReference({ epochMs: Date.now() - 1_000, monotonicMs: 1 }),
+				status: "stopped",
+				endedAtEpochMs: Date.now(),
+				durationMs: 1_000,
+			});
+			const response = await runCommand([
+				"actions",
+				"add",
+				manifestPath,
+				"--time",
+				"auto",
+				"--label",
+				"Too late",
+				"--point",
+				"0.2,0.3",
+			]);
+			expect(response).toMatchObject({ ok: false, error: { code: "ACTION_CLOCK_STOPPED" } });
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("reconciles approximate actions to bounded native click telemetry after capture", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "mega-recorder-actions-reconcile-"));
+		try {
+			const manifestPath = path.join(root, "actions.json");
+			const outputPath = path.join(root, "reconciled.actions.json");
+			const mediaPath = path.join(root, "capture.mp4");
+			const startedAtEpochMs = Date.now() - 1_250;
+			const clockPath = path.join(root, "capture.clock.json");
+			await fs.writeFile(
+				`${mediaPath}.cursor.json`,
+				JSON.stringify({
+					samples: [
+						{ timeMs: 1_250, cx: 0.2, cy: 0.3, interactionType: "click" },
+						{ timeMs: 2_000, cx: 0.2, cy: 0.3, interactionType: "click" },
+					],
+				}),
+			);
+			await writeRecordingClock(clockPath, {
+				...createRecordingClockReference({ startedAtEpochMs, monotonicMs: 1 }),
+				status: "stopped",
+				endedAtEpochMs: startedAtEpochMs + 3_000,
+				durationMs: 3_000,
+			});
+			await writeActionManifest(
+				manifestPath,
+				normalizeActionManifest({
+					recordingClockPath: clockPath,
+					actions: [
+						{
+							id: "save",
+							timestampSec: 1.25,
+							label: "Save",
+							point: { x: 0.2, y: 0.3 },
+							timestampSource: "recording-clock",
+							timestampAccuracy: "approximate",
+							observedAtEpochMs: startedAtEpochMs + 1_250,
+						},
+					],
+				}),
+			);
+			const response = await runCommand([
+				"actions",
+				"reconcile",
+				manifestPath,
+				"--recording",
+				mediaPath,
+				"--output",
+				outputPath,
+			]);
+			expect(response).toMatchObject({ ok: true, reconciledCount: 1, unmatchedActionIds: [] });
+			expect(JSON.parse(await fs.readFile(outputPath, "utf8")).actions[0]).toMatchObject({
+				timestampSec: 1.25,
+				timestampSource: "cursor-telemetry",
+				timestampAccuracy: "exact",
+			});
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("reconciles from the persisted source timestamp when no recording clock is available", async () => {
+		const root = await fs.mkdtemp(
+			path.join(os.tmpdir(), "mega-recorder-actions-reconcile-no-clock-"),
+		);
+		try {
+			const manifestPath = path.join(root, "actions.json");
+			const outputPath = path.join(root, "reconciled.actions.json");
+			const mediaPath = path.join(root, "capture.mp4");
+			await fs.writeFile(
+				`${mediaPath}.cursor.json`,
+				JSON.stringify({
+					samples: [{ timeMs: 1_500, cx: 0.2, cy: 0.3, interactionType: "click" }],
+				}),
+			);
+			await writeActionManifest(
+				manifestPath,
+				normalizeActionManifest({
+					actions: [
+						{
+							id: "open",
+							timestampSec: 1.5,
+							label: "Open",
+							point: { x: 0.2, y: 0.3 },
+							timestampSource: "recording-clock",
+							timestampAccuracy: "approximate",
+							observedAtEpochMs: Date.now(),
+						},
+					],
+				}),
+			);
+			const response = await runCommand([
+				"actions",
+				"reconcile",
+				manifestPath,
+				"--recording",
+				mediaPath,
+				"--output",
+				outputPath,
+			]);
+			expect(response).toMatchObject({ ok: true, reconciledCount: 1, unmatchedActionIds: [] });
+			expect(JSON.parse(await fs.readFile(outputPath, "utf8")).actions[0]).toMatchObject({
+				timestampSec: 1.5,
+				timestampSource: "cursor-telemetry",
+				timestampAccuracy: "exact",
+			});
 		} finally {
 			await fs.rm(root, { recursive: true, force: true });
 		}

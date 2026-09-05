@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AxcutDocument, AxcutTranscript } from "../schema";
+import { type AxcutDocument, type AxcutTranscript, documentSchema } from "../schema";
 import {
 	type AssetTranscriptionView,
 	classifyTranscriptionError,
@@ -247,7 +247,7 @@ describe("transcriptRelevantAssetIds", () => {
 	};
 
 	function doc(assetIds: string[], clipAssetIds: string[]): AxcutDocument {
-		return {
+		return documentSchema.parse({
 			...base,
 			assets: assetIds.map((id) => ({
 				id,
@@ -274,7 +274,7 @@ describe("transcriptRelevantAssetIds", () => {
 				speedRanges: [],
 				captionRanges: [],
 			},
-		} as AxcutDocument;
+		});
 	}
 
 	it("only counts the assets the timeline plays", () => {

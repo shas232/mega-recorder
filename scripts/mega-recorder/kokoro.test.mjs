@@ -2,7 +2,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildRuntimeEnvironment, modelCacheCandidates, resolveDefaultVoice } from "./kokoro.mjs";
+import {
+	buildRuntimeEnvironment,
+	KOKORO_DEFAULT_VOICE,
+	modelCacheCandidates,
+	resolveDefaultVoice,
+} from "./kokoro.mjs";
 
 describe("local Kokoro runtime contract", () => {
 	it("uses an explicit model cache while forcing offline, no-telemetry mode", () => {
@@ -47,6 +52,24 @@ describe("local Kokoro runtime contract", () => {
 			expect(await resolveDefaultVoice({ MEGA_RECORDER_KOKORO_MODEL_CACHE: cache })).toBe(
 				"am_michael",
 			);
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("uses af_sky as the product default when it is cached", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "mega-recorder-kokoro-"));
+		try {
+			const cache = path.join(root, "models--hexgrad--Kokoro-82M");
+			const snapshot = path.join(cache, "snapshots", "local", "voices");
+			await fs.mkdir(snapshot, { recursive: true });
+			await fs.writeFile(path.join(cache, "snapshots", "local", "config.json"), "{}", "utf8");
+			await fs.writeFile(path.join(cache, "snapshots", "local", "model.pth"), "weights");
+			await fs.writeFile(path.join(snapshot, "af_sky.pt"), "voice");
+			await fs.writeFile(path.join(snapshot, "am_michael.pt"), "voice");
+
+			expect(KOKORO_DEFAULT_VOICE).toBe("af_sky");
+			expect(await resolveDefaultVoice({ MEGA_RECORDER_KOKORO_MODEL_CACHE: cache })).toBe("af_sky");
 		} finally {
 			await fs.rm(root, { recursive: true, force: true });
 		}

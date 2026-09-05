@@ -8,6 +8,8 @@ import path from "node:path";
  */
 export const ACTION_MANIFEST_SCHEMA_VERSION = 1;
 
+export const ACTION_TIMESTAMP_SOURCES = ["manual", "recording-clock", "cursor-telemetry"];
+
 function finite(value) {
 	return typeof value === "number" && Number.isFinite(value);
 }
@@ -68,6 +70,20 @@ export function normalizeAction(value, index = 0) {
 		raw.timelineTimeSec === undefined ? undefined : Number(raw.timelineTimeSec);
 	if (timelineTimeSec !== undefined && (!finite(timelineTimeSec) || timelineTimeSec < 0))
 		throw new Error("timelineTimeSec must be a non-negative number");
+	const timestampSource = raw.timestampSource;
+	if (timestampSource !== undefined && !ACTION_TIMESTAMP_SOURCES.includes(timestampSource))
+		throw new Error(`timestampSource must be one of: ${ACTION_TIMESTAMP_SOURCES.join(", ")}`);
+	const timestampAccuracy = raw.timestampAccuracy;
+	if (
+		timestampAccuracy !== undefined &&
+		timestampAccuracy !== "exact" &&
+		timestampAccuracy !== "approximate"
+	)
+		throw new Error("timestampAccuracy must be exact or approximate");
+	const observedAtEpochMs =
+		raw.observedAtEpochMs === undefined ? undefined : Number(raw.observedAtEpochMs);
+	if (observedAtEpochMs !== undefined && (!finite(observedAtEpochMs) || observedAtEpochMs < 0))
+		throw new Error("observedAtEpochMs must be a non-negative number");
 	return {
 		id: actionId(raw.id, index),
 		timestampSec,
@@ -76,6 +92,9 @@ export function normalizeAction(value, index = 0) {
 		...(targetRect ? { targetRect } : {}),
 		...(sceneId ? { sceneId } : {}),
 		...(timelineTimeSec !== undefined ? { timelineTimeSec } : {}),
+		...(timestampSource ? { timestampSource } : {}),
+		...(timestampAccuracy ? { timestampAccuracy } : {}),
+		...(observedAtEpochMs !== undefined ? { observedAtEpochMs } : {}),
 	};
 }
 
@@ -85,10 +104,17 @@ export function normalizeActionManifest(value, context = {}) {
 		throw new Error(`Unsupported action manifest schema version: ${value.schemaVersion}`);
 	const projectId = value.projectId ?? context.projectId;
 	const assetId = value.assetId ?? context.assetId;
+	const recordingClockPath = value.recordingClockPath ?? context.recordingClockPath;
 	if (projectId !== undefined && projectId !== null && typeof projectId !== "string")
 		throw new Error("projectId must be a string");
 	if (assetId !== undefined && assetId !== null && typeof assetId !== "string")
 		throw new Error("assetId must be a string");
+	if (
+		recordingClockPath !== undefined &&
+		recordingClockPath !== null &&
+		typeof recordingClockPath !== "string"
+	)
+		throw new Error("recordingClockPath must be a string");
 	const inputActions = Array.isArray(value.actions) ? value.actions : [];
 	const actions = inputActions.map((action, index) => {
 		const normalized = normalizeAction(action, index);
@@ -105,6 +131,7 @@ export function normalizeActionManifest(value, context = {}) {
 		schemaVersion: ACTION_MANIFEST_SCHEMA_VERSION,
 		...(projectId ? { projectId } : {}),
 		...(assetId ? { assetId } : {}),
+		...(recordingClockPath ? { recordingClockPath } : {}),
 		actions,
 	};
 }
@@ -114,6 +141,7 @@ export function startActionManifest(context = {}) {
 		schemaVersion: ACTION_MANIFEST_SCHEMA_VERSION,
 		projectId: context.projectId,
 		assetId: context.assetId,
+		recordingClockPath: context.recordingClockPath,
 		actions: [],
 	});
 }
@@ -137,6 +165,77 @@ export async function writeActionManifest(filePath, manifest) {
 	await fs.mkdir(path.dirname(filePath), { recursive: true });
 	await fs.writeFile(filePath, stableJson(next), { encoding: "utf8", mode: 0o600 });
 	return next;
+}
+
+/**
+ * Find a native click sample for an auto-timed action. This is intentionally
+ * best-effort: an absent/unreadable sidecar is reported to the caller so it
+ * can use the recording clock with an explicit approximate accuracy instead
+ * of pretending a DOM/tool response was an exact click.
+ */
+export async function findCursorTelemetryClick(
+	mediaPath,
+	target,
+	{ expectedTimeMs, toleranceMs = 1_500 } = {},
+) {
+	if (typeof mediaPath !== "string" || !mediaPath.trim()) return null;
+	let parsed;
+	try {
+		parsed = JSON.parse(await fs.readFile(`${mediaPath}.cursor.json`, "utf8"));
+	} catch {
+		return null;
+	}
+	const samples = Array.isArray(parsed) ? parsed : parsed?.samples;
+	if (!Array.isArray(samples)) return null;
+	const focus = target?.targetRect
+		? {
+				x: target.targetRect.x + target.targetRect.width / 2,
+				y: target.targetRect.y + target.targetRect.height / 2,
+			}
+		: target?.point;
+	const clicks = samples
+		.filter(
+			(sample) =>
+				sample &&
+				sample.interactionType === "click" &&
+				finite(Number(sample.timeMs)) &&
+				Number(sample.timeMs) >= 0 &&
+				finite(Number(sample.cx)) &&
+				finite(Number(sample.cy)),
+		)
+		.map((sample) => ({
+			timeMs: Number(sample.timeMs),
+			x: Number(sample.cx),
+			y: Number(sample.cy),
+		}))
+		.sort((a, b) => a.timeMs - b.timeMs);
+	if (
+		clicks.length === 0 ||
+		!finite(expectedTimeMs) ||
+		expectedTimeMs < 0 ||
+		!finite(toleranceMs) ||
+		toleranceMs < 0 ||
+		!focus
+	)
+		return null;
+	const temporallyBounded = clicks.filter(
+		(click) => Math.abs(click.timeMs - expectedTimeMs) <= toleranceMs,
+	);
+	if (temporallyBounded.length === 0) return null;
+	// A point/rectangle is normalized against the source frame. Limit the
+	// candidate set to the action's recording-clock neighborhood first, then
+	// prefer temporal proximity before spatial proximity. This prevents a
+	// repeated button elsewhere in the take from being selected just because it
+	// has the same coordinates.
+	const nearest = clicks
+		.filter((click) => temporallyBounded.includes(click))
+		.map((click) => ({ ...click, distance: Math.hypot(click.x - focus.x, click.y - focus.y) }))
+		.sort(
+			(a, b) =>
+				Math.abs(a.timeMs - expectedTimeMs) - Math.abs(b.timeMs - expectedTimeMs) ||
+				a.distance - b.distance,
+		)[0];
+	return nearest.distance <= 0.16 ? nearest : null;
 }
 
 function clipsForAsset(document, assetId) {

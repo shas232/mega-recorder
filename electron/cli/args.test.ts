@@ -125,6 +125,8 @@ describe("parseCliArgs", () => {
 			"12.5",
 			"--project",
 			"demo.openscreen",
+			"--clock-file",
+			"capture.recording-clock.json",
 		]);
 		expect(cmd).toMatchObject({
 			kind: "record",
@@ -134,6 +136,7 @@ describe("parseCliArgs", () => {
 			systemAudio: true,
 			durationMs: 12500,
 			projectOut: inCwd("demo.openscreen"),
+			recordingClockPath: inCwd("capture.recording-clock.json"),
 		});
 	});
 

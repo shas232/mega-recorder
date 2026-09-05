@@ -106,7 +106,7 @@ index 00000000..8f1b0158
 +npm run --silent mega-recorder -- doctor
 +npm run --silent mega-recorder -- preset show blue-studio
 +npm run --silent mega-recorder -- preset apply blue-studio --project demo.openscreen
-+npm run --silent mega-recorder -- kokoro synthesize --text "Welcome" --voice am_michael --output narration.wav
++npm run --silent mega-recorder -- kokoro synthesize --text "Welcome" --voice af_sky --output narration.wav
 +npm run --silent mega-recorder -- verify demo.mp4 --preset blue-studio --manifest demo.mega.json
 +```
 +
@@ -124,7 +124,7 @@ index 00000000..8f1b0158
 +`kokoro doctor` searches an explicit `MEGA_RECORDER_KOKORO_PYTHON`, the active
 +virtual environment, a conventional `~/.venvs/kokoro`, and `python3` on PATH.
 +It reuses an existing `hexgrad/Kokoro-82M` cache. `kokoro doctor` reports the
-+cached voice ids; when `--voice` is omitted, synthesis prefers `af_heart`, then
++cached voice ids; when `--voice` is omitted, synthesis prefers `af_sky`, then
 +the cached `am_michael` voice, then the first cached voice. An explicitly
 +requested voice must be present in the cache. Synthesis fails if either the
 +runtime or model cache is missing. The adapter sets `HF_HUB_OFFLINE=1`,
@@ -1995,7 +1995,7 @@ new file mode 100644
 index 00000000..16cc2068
 --- /dev/null
 +++ b/scripts/mega-recorder/kokoro.mjs
-@@ -0,0 +1,240 @@
+@@ -0,0 +1,241 @@
 +import { spawn } from "node:child_process";
 +import fs from "node:fs/promises";
 +import os from "node:os";
@@ -2004,7 +2004,7 @@ index 00000000..16cc2068
 +
 +const MODEL_ID = "hexgrad/Kokoro-82M";
 +const SAMPLE_RATE = 24000;
-+const PREFERRED_DEFAULT_VOICE = "af_heart";
++const PREFERRED_DEFAULT_VOICE = "af_sky";
 +const FALLBACK_DEFAULT_VOICE = "am_michael";
 +const RUNTIME_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "kokoro_runtime.py");
 +
@@ -2236,6 +2236,7 @@ index 00000000..16cc2068
 +
 +export const KOKORO_MODEL_ID = MODEL_ID;
 +export const KOKORO_SAMPLE_RATE = SAMPLE_RATE;
++export const KOKORO_DEFAULT_VOICE = PREFERRED_DEFAULT_VOICE;
 diff --git a/scripts/mega-recorder/kokoro.test.mjs b/scripts/mega-recorder/kokoro.test.mjs
 new file mode 100644
 index 00000000..1b5a95d9
@@ -2301,7 +2302,7 @@ new file mode 100755
 index 00000000..0ed5c08d
 --- /dev/null
 +++ b/scripts/mega-recorder/kokoro_runtime.py
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,141 @@
 +#!/usr/bin/env python3
 +"""Small offline Kokoro adapter used by the MEGA RECORDER Node CLI.
 +
@@ -2321,6 +2322,7 @@ index 00000000..0ed5c08d
 +
 +
 +SAMPLE_RATE = 24000
++DEFAULT_VOICE = "af_sky"
 +
 +
 +def emit(payload: dict) -> None:
@@ -2421,7 +2423,7 @@ index 00000000..0ed5c08d
 +    parser = argparse.ArgumentParser()
 +    parser.add_argument("--doctor", action="store_true")
 +    parser.add_argument("--synthesize", action="store_true")
-+    parser.add_argument("--voice", default="af_heart")
++    parser.add_argument("--voice", default=DEFAULT_VOICE)
 +    parser.add_argument("--output", type=Path)
 +    parser.add_argument("--sample-rate", type=int, default=SAMPLE_RATE)
 +    args = parser.parse_args()

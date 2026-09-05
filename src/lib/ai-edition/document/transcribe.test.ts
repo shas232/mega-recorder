@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { type AxcutDocument, axcutSchemaVersion } from "../schema";
+import { type AxcutDocument, axcutSchemaVersion, documentSchema } from "../schema";
 import { transcribeAsset } from "./transcribe";
 
 vi.mock("@/components/video-editor/projectPersistence", () => ({
@@ -18,7 +18,7 @@ const { transcribeMono16kToSegments } = await import("@/lib/captioning");
 const transcribeMock = vi.mocked(transcribeMono16kToSegments);
 
 function makeDoc(): AxcutDocument {
-	return {
+	return documentSchema.parse({
 		schemaVersion: axcutSchemaVersion,
 		project: {
 			id: "proj_1",
@@ -50,7 +50,7 @@ function makeDoc(): AxcutDocument {
 		annotations: [],
 		zoomRanges: [],
 		legacyEditor: null,
-	};
+	});
 }
 
 describe("transcribeAsset language handling", () => {

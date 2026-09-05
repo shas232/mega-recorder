@@ -1,5 +1,6 @@
 import {
 	ChevronDown,
+	Crop,
 	Download,
 	FolderOpen,
 	FolderPlus,
@@ -33,6 +34,8 @@ export interface TopBarActions {
 	openProviderSettings: () => void;
 	showAbout: () => void;
 	checkForUpdates: () => void;
+	/** Open the existing crop editor for the complete recorded timeline. */
+	crop?: () => void;
 }
 
 interface EditorTopBarProps {
@@ -41,6 +44,7 @@ interface EditorTopBarProps {
 	projectTitle: string | null;
 	dirty: boolean;
 	canExport: boolean;
+	canCrop?: boolean;
 	chatOpen: boolean;
 	actions: TopBarActions;
 }
@@ -57,6 +61,7 @@ export function EditorTopBar({
 	projectTitle,
 	dirty,
 	canExport,
+	canCrop = false,
 	chatOpen,
 	actions,
 }: EditorTopBarProps) {
@@ -137,6 +142,17 @@ export function EditorTopBar({
 					/>
 				) : null}
 			</button>
+			{canCrop ? (
+				<button
+					type="button"
+					className={styles.iconBtn}
+					title={t("inspector.openCrop")}
+					aria-label={t("inspector.openCrop")}
+					onClick={() => actions.crop?.()}
+				>
+					<Crop size={16} />
+				</button>
+			) : null}
 			<span className={styles.sep} aria-hidden />
 			<LangButton />
 			{/* Both states are always rendered, stacked in one grid cell, so the slot

@@ -9,6 +9,7 @@ import {
 	type AxcutClip,
 	type AxcutDocument,
 	axcutSchemaVersion,
+	documentSchema,
 } from "@/lib/ai-edition/schema";
 
 function asset(p: Partial<AxcutAsset> & Pick<AxcutAsset, "id">): AxcutAsset {
@@ -35,7 +36,7 @@ function clip(p: Partial<AxcutClip> & Pick<AxcutClip, "id" | "assetId">): AxcutC
 }
 
 function doc(assets: AxcutAsset[], clips: AxcutClip[]): AxcutDocument {
-	return {
+	return documentSchema.parse({
 		schemaVersion: axcutSchemaVersion,
 		project: {
 			id: "proj_1",
@@ -58,7 +59,7 @@ function doc(assets: AxcutAsset[], clips: AxcutClip[]): AxcutDocument {
 		annotations: [],
 		zoomRanges: [],
 		legacyEditor: null,
-	};
+	});
 }
 
 describe("pickExtremeDims", () => {

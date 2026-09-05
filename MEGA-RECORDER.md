@@ -5,6 +5,7 @@ open-source desktop screen recorder and video editor.
 
 ## Pinned source
 
+- Product release: `v0.3.1`
 - Upstream: <https://github.com/getopenscreen/openscreen>
 - Selected ref: `origin/main`
 - Selected commit: `cc7d514a93c828f52b5cf28a1aaf091c399f2bd1`
@@ -29,6 +30,8 @@ so this layer does not reimplement or fake native capture. Local Kokoro runs in
 it accepts text through stdin and writes 24 kHz mono PCM WAV. If the Python
 package/model cache is not already installed, `kokoro doctor` reports `ready: false`
 and synthesis exits with a structured error rather than downloading anything.
+When no voice is specified, the product default is `af_sky` (with a cached-voice
+fallback); an explicit `--voice` remains authoritative.
 The top-level `doctor` command reports `ready: true` only when both ffprobe and
 the local Kokoro runtime/model are ready.
 

@@ -20,6 +20,7 @@ from bootstrap import valid_repo
 
 
 MODEL_ID = "hexgrad/Kokoro-82M"
+DEFAULT_VOICE = "af_sky"
 REQUIREMENTS = ("kokoro", "torch", "numpy", "soundfile", "misaki", "huggingface_hub")
 PREFERRED_PYTHON_MINORS = (11, 12)
 FALLBACK_PYTHON_MINORS = (13,)

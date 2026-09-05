@@ -63,6 +63,24 @@ describe("migrateProjectDataToAxcutDocument", () => {
 		expect(clip.sourceEndSec).toBeUndefined();
 	});
 
+	it("moves the legacy editor crop onto the migrated clip", () => {
+		const doc = migrateProjectDataToAxcutDocument(
+			makeV2Project({
+				editor: {
+					...makeV2Project().editor,
+					cropRegion: { x: 0, y: 0.08, width: 1, height: 0.92 },
+				},
+			}),
+		);
+
+		expect(doc.timeline.clips[0].cropRegion).toEqual({
+			x: 0,
+			y: 0.08,
+			width: 1,
+			height: 0.92,
+		});
+	});
+
 	it("converts trimRegions to trimRanges on the primary asset (1.5s cut)", () => {
 		const doc = migrateProjectDataToAxcutDocument(
 			makeV2Project({
@@ -321,6 +339,28 @@ describe("migrateAxcutDocumentToProjectData", () => {
 		const doc = migrateProjectDataToAxcutDocument(v2);
 		const back = migrateAxcutDocumentToProjectData(doc);
 		expect(back.media?.webcamVideoPath).toBe("/recordings/screen-webcam.webm");
+	});
+
+	it("preserves a recorder source clock across the v2/v7 bridge", () => {
+		const clock = {
+			schemaVersion: 1,
+			kind: "mega-recorder-recording-clock",
+			ready: true as const,
+			status: "stopped" as const,
+			startedAtEpochMs: 1_700_000_000_000,
+			startedAtIso: "2023-11-14T22:13:20.000Z",
+			source: "recorder-recording-state",
+			precisionMs: 1,
+			endedAtEpochMs: 1_700_000_003_000,
+			durationMs: 3_000,
+		};
+		const doc = migrateProjectDataToAxcutDocument(makeV2Project({ recordingClock: clock }));
+		expect(doc.recordingClock).toMatchObject({
+			status: "stopped",
+			startedAtEpochMs: clock.startedAtEpochMs,
+		});
+		const back = migrateAxcutDocumentToProjectData(doc);
+		expect(back.recordingClock).toMatchObject({ status: "stopped", durationMs: 3_000 });
 	});
 
 	it("clamps bad zoom focus to [0, 1] on forward migration", () => {

@@ -443,6 +443,9 @@ interface Window {
 		cliProgress: (progress: import("../src/lib/cliContracts").CliProgressEvent) => void;
 		cliLog: (level: "info" | "error", message: string) => void;
 		cliDone: (result: import("../src/lib/cliContracts").CliDoneResult) => Promise<void>;
+		cliRecordingClockReady: (
+			clock: NonNullable<import("../src/lib/cliContracts").CliDoneResult["recordingClock"]>,
+		) => Promise<{ success: boolean; path?: string; error?: string }>;
 		onCliStopRecording: (callback: () => void) => () => void;
 		setLocale: (locale: string) => Promise<void>;
 		saveDiagnostic: (payload: {

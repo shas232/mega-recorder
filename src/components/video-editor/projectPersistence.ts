@@ -110,6 +110,21 @@ export interface EditorProjectData {
 	media?: ProjectMedia;
 	editor: ProjectEditorState;
 	videoPath?: string;
+	/** Optional source-clock audit reference emitted by the headless recorder. */
+	recordingClock?: {
+		schemaVersion: number;
+		kind: string;
+		ready: boolean;
+		status?: "recording" | "stopped";
+		clockId?: string;
+		startedAtEpochMs: number;
+		startedAtMonotonicMs?: number;
+		startedAtIso: string;
+		source: string;
+		precisionMs: number;
+		endedAtEpochMs?: number;
+		durationMs?: number;
+	};
 }
 
 function isFiniteNumber(value: unknown): value is number {

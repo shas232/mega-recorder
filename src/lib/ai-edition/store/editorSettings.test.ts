@@ -5,11 +5,10 @@ import {
 	DEFAULT_WEBCAM_LAYOUT_PRESET,
 	DEFAULT_WEBCAM_MASK_SHAPE,
 } from "@/components/video-editor/types";
-import type { AxcutDocument } from "../schema";
-import { axcutSchemaVersion } from "../schema";
+import { type AxcutDocument, axcutSchemaVersion, documentSchema } from "../schema";
 import { DEFAULT_EDITOR_SETTINGS, getEditorSettings, patchEditorSettings } from "./editorSettings";
 
-const baseDoc: AxcutDocument = {
+const baseDoc: AxcutDocument = documentSchema.parse({
 	schemaVersion: axcutSchemaVersion,
 	project: {
 		id: "p1",
@@ -32,7 +31,7 @@ const baseDoc: AxcutDocument = {
 	transcripts: [],
 	transcript: null,
 	legacyEditor: null,
-};
+});
 
 describe("getEditorSettings", () => {
 	it("returns the defaults when the document has no legacyEditor", () => {

@@ -1,6 +1,7 @@
 {
 	"contract": "mega-recorder-project",
 	"schemaVersion": 1,
+	"productRelease": "v0.3.1",
 	"project": {
 		"name": "MEGA RECORDER",
 		"kind": "team-fork-baseline",

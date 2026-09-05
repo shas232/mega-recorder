@@ -4,6 +4,7 @@ import {
 	type AxcutClip,
 	type AxcutDocument,
 	axcutSchemaVersion,
+	documentSchema,
 } from "@/lib/ai-edition/schema";
 import {
 	ASPECT_RATIO_PRESETS,
@@ -45,7 +46,7 @@ function clip(id: string, assetId: string, cropRegion?: AxcutClip["cropRegion"])
 }
 
 function doc(assets: AxcutAsset[], clips: AxcutClip[]): AxcutDocument {
-	return {
+	return documentSchema.parse({
 		schemaVersion: axcutSchemaVersion,
 		project: {
 			id: "proj_1",
@@ -68,7 +69,7 @@ function doc(assets: AxcutAsset[], clips: AxcutClip[]): AxcutDocument {
 		annotations: [],
 		zoomRanges: [],
 		legacyEditor: null,
-	};
+	});
 }
 
 describe("collectNativeFormats", () => {

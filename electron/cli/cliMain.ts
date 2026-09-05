@@ -205,6 +205,27 @@ async function writeProjectFile(projectOut: string, projectData: unknown): Promi
 	await fs.writeFile(projectOut, JSON.stringify(projectData, null, 2), "utf8");
 }
 
+type CliRecordingClock = NonNullable<CliDoneResult["recordingClock"]>;
+
+/** Keep the renderer's clock handoff atomic; action commands may read it while recording. */
+async function writeRecordingClock(clockPath: string, clock: CliRecordingClock): Promise<void> {
+	if (!clock || clock.ready !== true || !Number.isFinite(clock.startedAtEpochMs)) {
+		throw new Error("Recorder returned an invalid source-clock reference");
+	}
+	await fs.mkdir(path.dirname(clockPath), { recursive: true });
+	const temporary = `${clockPath}.${process.pid}.tmp`;
+	try {
+		await fs.writeFile(temporary, `${JSON.stringify(clock, null, 2)}\n`, {
+			encoding: "utf8",
+			mode: 0o600,
+		});
+		await fs.rename(temporary, clockPath);
+	} catch (error) {
+		await fs.rm(temporary, { force: true }).catch(() => undefined);
+		throw error;
+	}
+}
+
 function setupRecordStopSignals(stop: (reason: string) => void): void {
 	// SIGINT covers Ctrl+C everywhere; SIGTERM never fires on Windows, where
 	// stdin "stop" or --duration are the graceful alternatives (see docs/cli.md).
@@ -412,6 +433,22 @@ export function runCli(command: CliCommand): void {
 			ipcMain.on("cli-progress", (_event, progress: CliProgressEvent) => {
 				output.progress(progress);
 			});
+			ipcMain.handle("cli-recording-clock-ready", async (_event, clock: CliRecordingClock) => {
+				if (command.kind !== "record") {
+					throw new Error("Recording clock is only available during record");
+				}
+				const clockPath = command.recordingClockPath;
+				if (clockPath) await writeRecordingClock(clockPath, clock);
+				output.event("recording-clock-ready", {
+					clockId: clock.clockId ?? null,
+					startedAtEpochMs: clock.startedAtEpochMs,
+					startedAtIso: clock.startedAtIso,
+					source: clock.source,
+					precisionMs: clock.precisionMs,
+					path: clockPath ?? null,
+				});
+				return { success: true, ...(clockPath ? { path: clockPath } : {}) };
+			});
 
 			ipcMain.handle("cli-done", async (_event, result: CliDoneResult) => {
 				milestone(`renderer reported done (success=${result.success})`);
@@ -419,6 +456,27 @@ export function runCli(command: CliCommand): void {
 				finished = true;
 
 				try {
+					if (
+						result.success &&
+						command.kind === "record" &&
+						command.recordingClockPath &&
+						result.recordingClock
+					) {
+						// Keep the handoff file useful while recording, but close it at the
+						// terminal edge so a later `--time auto` cannot invent an event after
+						// capture has stopped.
+						const finalizedClock = {
+							...result.recordingClock,
+							status: "stopped" as const,
+							endedAtEpochMs: Date.now(),
+							...(result.durationMs !== undefined ? { durationMs: result.durationMs } : {}),
+						};
+						await writeRecordingClock(command.recordingClockPath, finalizedClock);
+						result.recordingClock = finalizedClock;
+						if (result.projectData && typeof result.projectData === "object") {
+							result.projectData = { ...result.projectData, recordingClock: finalizedClock };
+						}
+					}
 					if (result.success && command.kind === "record" && command.projectOut) {
 						if (result.projectData !== undefined) {
 							await writeProjectFile(command.projectOut, result.projectData);

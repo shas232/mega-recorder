@@ -19,12 +19,13 @@ import { EditorTopBar } from "./EditorTopBar";
 
 const noop = () => {};
 
-function renderTopBar(projectTitle: string | null) {
+function renderTopBar(projectTitle: string | null, canCrop = false) {
 	const onRename = vi.fn();
 	const onShowAbout = vi.fn();
 	const onCheckForUpdates = vi.fn();
 	const onOpenSettings = vi.fn();
 	const onOpenProviderSettings = vi.fn();
+	const onCrop = vi.fn();
 	render(
 		<EditorTopBar
 			mode="edit"
@@ -32,6 +33,7 @@ function renderTopBar(projectTitle: string | null) {
 			projectTitle={projectTitle}
 			dirty={false}
 			canExport={false}
+			canCrop={canCrop}
 			chatOpen={false}
 			actions={{
 				openProject: noop,
@@ -44,10 +46,18 @@ function renderTopBar(projectTitle: string | null) {
 				openProviderSettings: onOpenProviderSettings,
 				showAbout: onShowAbout,
 				checkForUpdates: onCheckForUpdates,
+				crop: onCrop,
 			}}
 		/>,
 	);
-	return { onRename, onShowAbout, onCheckForUpdates, onOpenSettings, onOpenProviderSettings };
+	return {
+		onRename,
+		onShowAbout,
+		onCheckForUpdates,
+		onOpenSettings,
+		onOpenProviderSettings,
+		onCrop,
+	};
 }
 
 /** The menu reads two separate channels, and they answer different questions: `getAppInfo` for
@@ -64,6 +74,12 @@ function stubElectronAPI(info: { version: string; canCheckForUpdates: boolean })
 }
 
 describe("ProjectNameField (issue #180)", () => {
+	it("exposes the crop action when a timeline is available", () => {
+		const { onCrop } = renderTopBar("Demo Project", true);
+		fireEvent.click(screen.getByRole("button", { name: "inspector.openCrop" }));
+		expect(onCrop).toHaveBeenCalledTimes(1);
+	});
+
 	it("renders the project title on the button", () => {
 		renderTopBar("Demo Project");
 		expect(screen.getByRole("button", { name: "topbar.renameProject" })).toHaveTextContent(
