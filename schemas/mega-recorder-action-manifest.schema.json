@@ -9,6 +9,7 @@
 		"schemaVersion": { "const": 1 },
 		"projectId": { "type": "string", "minLength": 1 },
 		"assetId": { "type": "string", "minLength": 1 },
+		"recordingClockPath": { "type": "string", "minLength": 1 },
 		"actions": {
 			"type": "array",
 			"items": { "$ref": "#/$defs/action" }
@@ -43,7 +44,10 @@
 				"label": { "type": "string", "minLength": 1, "maxLength": 160 },
 				"point": { "$ref": "#/$defs/point" },
 				"targetRect": { "$ref": "#/$defs/targetRect" },
-				"sceneId": { "type": "string", "maxLength": 160 }
+				"sceneId": { "type": "string", "maxLength": 160 },
+				"timestampSource": { "enum": ["manual", "recording-clock", "cursor-telemetry"] },
+				"timestampAccuracy": { "enum": ["exact", "approximate"] },
+				"observedAtEpochMs": { "type": "number", "minimum": 0 }
 			},
 			"anyOf": [
 				{ "required": ["point"], "properties": { "point": { "$ref": "#/$defs/point" } } },

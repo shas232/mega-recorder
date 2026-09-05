@@ -7,12 +7,15 @@ agents and CI to consume without scraping human progress output.
 npm run --silent mega-recorder -- doctor
 npm run --silent mega-recorder -- preset show blue-studio
 npm run --silent mega-recorder -- preset apply blue-studio --project demo.openscreen
-npm run --silent mega-recorder -- kokoro synthesize --text "Welcome" --voice am_michael --output narration.wav
-npm run --silent mega-recorder -- audio attach demo.openscreen --file narration.wav --voice af_heart --start 12 --mode mix --in-place
+npm run --silent mega-recorder -- kokoro synthesize --text "Welcome" --voice af_sky --output narration.wav
+npm run --silent mega-recorder -- audio attach demo.openscreen --file narration.wav --voice af_sky --start 12 --mode mix --in-place
 npm run --silent mega-recorder -- verify demo.mp4 --preset blue-studio --manifest demo.mega.json
 npm run --silent mega-recorder -- actions start demo.openscreen --output demo.actions.json
 npm run --silent mega-recorder -- actions add demo.actions.json --time 12.4 --label "Click Save" --point 0.72,0.31
 npm run --silent mega-recorder -- actions apply demo.openscreen --manifest demo.actions.json --callouts
+npm run --silent mega-recorder -- scenes start demo.openscreen --output demo.scenes.json
+npm run --silent mega-recorder -- scenes add demo.scenes.json --name "Save settings" --start 11 --end 14 --text "Save the settings" --audio-track-ids narration_1
+npm run --silent mega-recorder -- scenes apply demo.openscreen --manifest demo.scenes.json
 npm run --silent mega-recorder -- edit overlay add demo.openscreen --start 0.4 --end 2.2 --text "MEGA Recorder" --type title --position 50,12 --size 76,14
 npm run --silent mega-recorder -- edit delete demo.openscreen --start 12.0 --end 12.4 --output demo.cut.openscreen
 ```
@@ -31,7 +34,7 @@ the native compositor's existing `legacyEditor` bridge.
 `kokoro doctor` searches an explicit `MEGA_RECORDER_KOKORO_PYTHON`, the active
 virtual environment, a conventional `~/.venvs/kokoro`, and `python3` on PATH.
 It reuses an existing `hexgrad/Kokoro-82M` cache. `kokoro doctor` reports the
-cached voice ids; when `--voice` is omitted, synthesis prefers `af_heart`, then
+cached voice ids; when `--voice` is omitted, synthesis prefers `af_sky`, then
 the cached `am_michael` voice, then the first cached voice. An explicitly
 requested voice must be present in the cache. Synthesis fails if either the
 runtime or model cache is missing. The adapter sets `HF_HUB_OFFLINE=1`,
@@ -106,6 +109,32 @@ For non-interactive agent use, `edit delete <project> --start <seconds>
 `.edited.openscreen` by default. Add `--in-place` to update the selected project
 file explicitly.
 
+### Crop the recorded browser frame
+
+The browser editor's crop button opens the existing crop rectangle editor. Apply
+the selected source-frame region to the complete video timeline; the original
+recording remains untouched and the browser save writes only the selected project
+sidecar. The native cursor, zoom focus, and labels continue to use their original
+source/frame coordinate spaces, so they stay aligned after the crop.
+
+For agents and scripts, use the same source-frame fractions with a sibling output
+by default:
+
+```bash
+npm run --silent mega-recorder -- edit crop demo.openscreen \
+  --region 0,0.08,1,0.92 --output demo.cropped.openscreen
+npm run --silent mega-recorder -- edit crop demo.openscreen \
+  --region 0.04,0.12,0.92,0.88 --clip-id clip_123 \
+  --output demo.scene-cropped.openscreen
+```
+
+`--region` is `x,y,width,height` to keep. Edge flags (`--top`, `--right`,
+`--bottom`, `--left`) are fractions to remove. Without `--clip-id`, every video
+clip receives one consistent framing; pass a clip id when a timeline scene needs
+a different crop. The default output is `<project>.cropped.<extension>`;
+`--in-place` is required to overwrite the project sidecar. Crop is metadata-only:
+it never rewrites the source video or its cursor telemetry sidecar.
+
 ## Attached audio and narration
 
 `audio attach` adds a local WAV/MP3/M4A/etc. to the selected project's timeline.
@@ -119,7 +148,7 @@ without embedding narration text.
 
 ```bash
 npm run --silent mega-recorder -- audio attach demo.openscreen \
-  --file narration.wav --voice af_heart --start 12 --mode mix --in-place
+  --file narration.wav --voice af_sky --start 12 --mode mix --in-place
 ```
 
 The browser timeline shows each attached block with its label, Kokoro voice (or
@@ -155,6 +184,59 @@ timestamps stay in source time while `timelineTimeSec` is recalculated after a
 ripple delete; actions inside the deleted span are dropped and generated framing
 is rebuilt. Source media and its existing `.cursor.json` telemetry sidecar are
 never rewritten.
+
+### Capture-clock timestamps
+
+Native recording can publish a readiness reference when capture actually starts.
+Pass the same absolute clock file to the recorder and action manifest:
+
+```bash
+node scripts/mega-recorder-cli.mjs actions start \
+  --output demo.actions.json --clock-file demo.recording-clock.json
+node scripts/mega-recorder-cli.mjs record --clock-file demo.recording-clock.json \
+  --window "Brave" --duration 20 --project demo.openscreen --json
+node scripts/mega-recorder-cli.mjs actions add demo.actions.json --time auto \
+  --label "Click Save" --point 0.72,0.31
+# After the take, refine approximate action rows against the finished sidecar:
+node scripts/mega-recorder-cli.mjs actions reconcile demo.actions.json \
+  --recording /path/to/screen-video.mp4 --output demo.actions.reconciled.json
+```
+
+`--time auto` uses a matching native `click` sample from
+`<recording>.cursor.json` when `--recording <video>` is supplied; that result is
+marked `timestampSource: "cursor-telemetry"` and `timestampAccuracy: "exact"`.
+Otherwise it uses the shared recording-start epoch in `--clock-file`, marks the
+result `timestampSource: "recording-clock"` and
+`timestampAccuracy: "approximate"`, and records the action invocation epoch.
+It never treats the time a tool response arrived as an exact click time. A
+spatially mismatched telemetry sample is not used as a fallback.
+The recorder marks the clock `status: "stopped"` when the take ends; `--time
+auto` then fails explicitly, so post-processing must provide an intentional
+numeric source time rather than placing an action after the take.
+To refine events collected while recording, `actions reconcile` uses each
+approximate row's persisted invocation time and target, then accepts only a
+native click inside the bounded time window; unmatched rows remain approximate.
+
+### Named scenes and revisions
+
+Scenes are persisted source-time spans with a stable id, revision number, action
+ids, per-action text mappings, and optional `audioTrackIds`/`overlayIds` links.
+A scene without `--id` gets a deterministic name-derived id; pass `--id` when
+names are not unique. Apply or revise a project without touching the source
+media:
+
+```bash
+node scripts/mega-recorder-cli.mjs scenes revise demo.openscreen \
+  --scene-id scene-save-settings --text "Save the updated settings" \
+  --output demo.scene-revised.openscreen
+```
+
+`scenes revise` updates the persisted scene mapping and increments its revision
+only when timing/name/copy/link changes. It does not synthesize or replace audio;
+text revisions return `needsNarrationRegeneration: true` while
+`narrationChanged: false`. Use the scene's `audioTrackIds` to replace the prior
+track rather than appending a duplicate. Scene times remain source-anchored
+across timeline cuts.
 
 ## Timed overlays and ripple alignment
 

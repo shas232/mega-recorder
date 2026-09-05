@@ -20,6 +20,13 @@ SPEC = importlib.util.spec_from_file_location("kokoro_setup", SCRIPT)
 assert SPEC and SPEC.loader
 kokoro_setup = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(kokoro_setup)
+RUNTIME_SCRIPT = Path(__file__).parents[3] / "scripts" / "mega-recorder" / "kokoro_runtime.py"
+kokoro_runtime = None
+if RUNTIME_SCRIPT.is_file():
+    RUNTIME_SPEC = importlib.util.spec_from_file_location("kokoro_runtime", RUNTIME_SCRIPT)
+    assert RUNTIME_SPEC and RUNTIME_SPEC.loader
+    kokoro_runtime = importlib.util.module_from_spec(RUNTIME_SPEC)
+    RUNTIME_SPEC.loader.exec_module(kokoro_runtime)
 
 
 def supported_base() -> str | None:
@@ -33,6 +40,11 @@ def supported_base() -> str | None:
 
 
 class KokoroSetupTests(unittest.TestCase):
+    def test_product_default_voice_is_sky(self) -> None:
+        self.assertEqual(kokoro_setup.DEFAULT_VOICE, "af_sky")
+        if kokoro_runtime is not None:
+            self.assertEqual(kokoro_runtime.DEFAULT_VOICE, "af_sky")
+
     def test_preference_excludes_host_python_3_14_until_supported_versions_are_unavailable(self) -> None:
         candidates = kokoro_setup.python_candidates({})
         self.assertEqual(candidates[:3], ["python3.11", "python3.12", "python3.13"])

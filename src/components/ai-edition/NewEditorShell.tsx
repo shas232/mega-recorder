@@ -127,8 +127,10 @@ export function NewEditorShell() {
 	// Crop + trim in/out both live in EditClipModal now (per-clip), reachable
 	// from the timeline (double-click / pencil icon) and the inspector's
 	// "Edit clip" rail button — a single shell-level instance instead of one
-	// mounted per trigger site.
+	// mounted per trigger site. The top-bar crop action reuses this same crop
+	// renderer, but broadcasts the chosen source-frame region to every clip.
 	const [editClipTarget, setEditClipTarget] = useState<AxcutClip | null>(null);
+	const [cropAllMode, setCropAllMode] = useState(false);
 	const [exportOpen, setExportOpen] = useState(false);
 	const [unsavedPrompt, setUnsavedPrompt] = useState<{
 		action: "close" | "new" | "open" | "record";
@@ -752,6 +754,14 @@ export function NewEditorShell() {
 		setExportOpen(true);
 	}, [hasAsset]);
 
+	const handleOpenCrop = useCallback(() => {
+		const selected = tl.clipSelection ? clips.find((clip) => clip.id === tl.clipSelection) : null;
+		const target = selected ?? clips[0] ?? null;
+		if (!target) return;
+		setCropAllMode(true);
+		setEditClipTarget(target);
+	}, [clips, tl.clipSelection]);
+
 	const handleOpenSettings = useCallback(() => {
 		openShortcutsConfig();
 	}, [openShortcutsConfig]);
@@ -1176,6 +1186,7 @@ export function NewEditorShell() {
 				projectTitle={project?.title ?? null}
 				dirty={dirty}
 				canExport={hasAsset && !hostedBrowserEditor}
+				canCrop={mode === "edit" && clips.length > 0}
 				chatOpen={chatOpen}
 				actions={{
 					openProject: () => setOpenProjectOpen(true),
@@ -1188,6 +1199,7 @@ export function NewEditorShell() {
 					openProviderSettings: () => openDialog("providers"),
 					showAbout: handleShowAbout,
 					checkForUpdates: handleCheckForUpdates,
+					crop: handleOpenCrop,
 				}}
 			/>
 			{hostedBrowserEditor ? (
@@ -1375,7 +1387,11 @@ export function NewEditorShell() {
 			/>
 			<EditClipModal
 				open={editClipTarget !== null}
-				onClose={() => setEditClipTarget(null)}
+				onClose={() => {
+					setEditClipTarget(null);
+					setCropAllMode(false);
+				}}
+				cropOnly={cropAllMode}
 				clip={editClipTarget}
 				assetMeta={
 					editClipTarget
@@ -1391,6 +1407,14 @@ export function NewEditorShell() {
 				videoSources={videoSources}
 				onApply={(sStart, sEnd, cropRegion) => {
 					if (!editClipTarget) return;
+					if (cropAllMode) {
+						if (cropRegion !== undefined) {
+							void enqueueTimelineWrite(() => tl.applyCropToAll(cropRegion));
+						}
+						setEditClipTarget(null);
+						setCropAllMode(false);
+						return;
+					}
 					const clipId = editClipTarget.id;
 					// One user action, one document, one save. This used to be two calls —
 					// `updateClipSourceRange` then `updateClipCrop` — each building its next

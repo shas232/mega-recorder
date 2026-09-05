@@ -217,6 +217,8 @@ const DECLARED: WritePath[] = [
 	// where they used to be two writes that overwrote each other.
 	w("src/components/ai-edition/v4/V4Timeline.tsx", "updateAudioTrack", "save", "gesture"),
 	w("src/lib/ai-edition/store/useTimeline.ts", "applyClipEdit", "save", "gesture"),
+	// The browser-toolbar crop dialog applies one framing edit to every clip.
+	w("src/lib/ai-edition/store/useTimeline.ts", "applyCropToAll", "save", "gesture"),
 	w("src/lib/ai-edition/store/useTimeline.ts", "addAnnotation", "save", "gesture"),
 	w("src/lib/ai-edition/store/useTimeline.ts", "addCameraFullscreen", "save", "gesture"),
 	w("src/lib/ai-edition/store/useTimeline.ts", "addOverlay", "save", "gesture"),

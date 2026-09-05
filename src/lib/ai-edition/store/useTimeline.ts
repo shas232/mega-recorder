@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toFileUrl } from "@/components/video-editor/projectPersistence";
 import type { AnnotationRegion, AnnotationType } from "@/components/video-editor/types";
 import { useScopedT } from "@/contexts/I18nContext";
+import { applyCropToDocument } from "../crop";
 import { createId } from "../document/ids";
 import {
 	duplicateClip as duplicateClipInDocument,
@@ -1001,6 +1002,24 @@ export function useTimeline() {
 		[saveDocument],
 	);
 
+	/**
+	 * Apply the browser toolbar's framing to the complete recorded timeline.
+	 * Reading inside the callback keeps this a safe read-modify-write when a
+	 * queued trim or clip edit has just committed. The crop mutator only changes
+	 * clip framing; source media, trims, zooms, cursor telemetry, and overlays
+	 * remain untouched.
+	 */
+	const applyCropToAll = useCallback(
+		async (cropRegion: AxcutClipCropRegion | null | undefined) => {
+			const doc = useProjectStore.getState().document;
+			if (!doc) return;
+			const next = applyCropToDocument(doc, cropRegion);
+			if (next === doc) return;
+			await saveDocument(next, { history: true });
+		},
+		[saveDocument],
+	);
+
 	// Background probe: read the asset's actual duration and patch the
 	// freshly-inserted clip to use it. Trims if the clip has already been
 	// trimmed (sourceEndSec != PLACEHOLDER_DURATION_SEC) so we never stomp
@@ -1232,6 +1251,7 @@ export function useTimeline() {
 		selectRegion,
 		clearSelection,
 		applyClipEdit,
+		applyCropToAll,
 		insertClipAt,
 		moveClip,
 		duplicateClip,

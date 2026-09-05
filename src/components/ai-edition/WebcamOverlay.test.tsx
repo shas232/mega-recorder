@@ -2,8 +2,12 @@
 import "@testing-library/jest-dom";
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import type { AxcutClip, AxcutDocument } from "@/lib/ai-edition/schema";
-import { axcutSchemaVersion } from "@/lib/ai-edition/schema";
+import {
+	type AxcutClip,
+	type AxcutDocument,
+	axcutSchemaVersion,
+	documentSchema,
+} from "@/lib/ai-edition/schema";
 import { useProjectStore } from "@/lib/ai-edition/store/projectStore";
 import { WebcamOverlay } from "./WebcamOverlay";
 
@@ -37,7 +41,7 @@ const CLIP_WITHOUT_CAMERA: AxcutClip = {
 };
 
 function makeDocument(): AxcutDocument {
-	return {
+	return documentSchema.parse({
 		schemaVersion: axcutSchemaVersion,
 		project: {
 			id: "proj_test",
@@ -75,7 +79,7 @@ function makeDocument(): AxcutDocument {
 		annotations: [],
 		zoomRanges: [],
 		legacyEditor: null,
-	};
+	});
 }
 
 function baseProps(currentTimeSec: number) {

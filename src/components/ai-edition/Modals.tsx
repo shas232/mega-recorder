@@ -645,6 +645,8 @@ interface EditClipModalProps extends BaseModalProps {
 	clip: AxcutClip | null;
 	assetMeta: AssetMeta | null;
 	videoSources: VideoSource[];
+	/** Opened from the toolbar: edit framing once and apply it to every clip. */
+	cropOnly?: boolean;
 	/** `cropRegion` is `undefined` when the crop section wasn't touched (Reset
 	 * back to the clip's stored value) — the caller can skip the write in that
 	 * case — and `null` when the user explicitly reset it to "no crop". */
@@ -664,6 +666,7 @@ export function EditClipModal({
 	clip,
 	assetMeta,
 	videoSources,
+	cropOnly = false,
 	onApply,
 }: EditClipModalProps) {
 	const t = useScopedT("editor");
@@ -743,7 +746,7 @@ export function EditClipModal({
 	const hasTrimChanges =
 		Math.abs(draftStart - clip.sourceStartSec) > 0.001 ||
 		Math.abs(draftEnd - (clip.sourceEndSec ?? 0)) > 0.001;
-	const hasChanges = hasTrimChanges || cropTouched;
+	const hasChanges = cropOnly ? cropTouched : hasTrimChanges || cropTouched;
 	const clipSources = videoSources.filter((s) => s.id === clip.assetId);
 	const cropPreviewSource = clipSources[0] ?? null;
 
@@ -975,8 +978,8 @@ export function EditClipModal({
 		<ModalShell
 			open={open}
 			onClose={onClose}
-			title={t("editClipDialog.title")}
-			subtitle={assetMeta?.label ?? undefined}
+			title={cropOnly ? ts("crop.title") : t("editClipDialog.title")}
+			subtitle={cropOnly ? t("cropDialog.subtitle") : (assetMeta?.label ?? undefined)}
 			wide
 		>
 			<div
@@ -1069,7 +1072,7 @@ export function EditClipModal({
 				</div>
 			</div>
 
-			<div style={{ flexShrink: 0 }}>
+			<div style={{ display: cropOnly ? "none" : "block", flexShrink: 0 }}>
 				<div style={{ display: "flex", gap: 24, marginBottom: 10 }}>
 					<RangeStat label={t("editClipDialog.start")} value={formatSeconds(draftStart)} />
 					<RangeStat label={t("editClipDialog.end")} value={formatSeconds(draftEnd)} />

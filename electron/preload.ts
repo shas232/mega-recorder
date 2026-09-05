@@ -493,6 +493,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	cliDone: (result: import("../src/lib/cliContracts").CliDoneResult) => {
 		return ipcRenderer.invoke("cli-done", result);
 	},
+	cliRecordingClockReady: (
+		clock: NonNullable<import("../src/lib/cliContracts").CliDoneResult["recordingClock"]>,
+	) => {
+		return ipcRenderer.invoke("cli-recording-clock-ready", clock);
+	},
 	onCliStopRecording: (callback: () => void) => {
 		const listener = () => callback();
 		ipcRenderer.on("cli-stop-recording", listener);

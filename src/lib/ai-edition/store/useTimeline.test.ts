@@ -2,8 +2,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@/contexts/I18nContext";
-import type { AxcutDocument } from "../schema";
-import { axcutSchemaVersion } from "../schema";
+import { type AxcutDocument, axcutSchemaVersion, documentSchema } from "../schema";
 import { useProjectStore } from "./projectStore";
 import { clearHistory, redo, undo } from "./undo";
 import { future, past } from "./undoStack";
@@ -55,7 +54,7 @@ vi.mock("@/native/client", () => ({
 	},
 }));
 
-const sampleDoc: AxcutDocument = {
+const sampleDoc: AxcutDocument = documentSchema.parse({
 	// ponytail: the bridge contract after the migration hoist is the CURRENT version —
 	// every load site (DocumentService, browserShim) runs `migrateRawDocumentToCurrent`
 	// before returning, and the renderer's `parseDocument` is a pure current-version
@@ -111,7 +110,7 @@ const sampleDoc: AxcutDocument = {
 	annotations: [],
 	zoomRanges: [],
 	legacyEditor: null,
-};
+});
 
 describe("useTimeline.insertClipAt background duration probe", () => {
 	beforeEach(() => {

@@ -471,10 +471,53 @@ export const actionMarkerSchema = z
 			.optional(),
 		sceneId: z.string().max(160).optional(),
 		timelineTimeSec: z.number().nonnegative().optional(),
+		timestampSource: z.enum(["manual", "recording-clock", "cursor-telemetry"]).optional(),
+		timestampAccuracy: z.enum(["exact", "approximate"]).optional(),
+		observedAtEpochMs: z.number().nonnegative().optional(),
 	})
 	.refine((value) => value.point !== undefined || value.targetRect !== undefined, {
 		message: "action requires point or targetRect",
 	});
+
+const sceneTextMappingSchema = z.object({
+	actionId: z.string().min(1),
+	text: z.string().min(1),
+});
+
+/** A named, revisable source-time span. The id is stable across copy/timing edits. */
+export const sceneSchema = z
+	.object({
+		id: z.string().min(1),
+		name: z.string().min(1).max(160),
+		startSec: z.number().nonnegative(),
+		endSec: z.number().nonnegative(),
+		text: z.string().default(""),
+		revision: z.number().int().positive().default(1),
+		actionIds: z.array(z.string().min(1)).default([]),
+		audioTrackIds: z.array(z.string().min(1)).default([]),
+		overlayIds: z.array(z.string().min(1)).default([]),
+		textMappings: z.array(sceneTextMappingSchema).optional(),
+	})
+	.refine((value) => value.endSec > value.startSec, {
+		message: "scene endSec must be greater than startSec",
+		path: ["endSec"],
+	});
+
+/** Recorder source-clock audit data. The stopped state prevents post-take auto timing. */
+export const recordingClockSchema = z.object({
+	schemaVersion: z.number().int().positive().default(1),
+	kind: z.string().min(1).default("mega-recorder-recording-clock"),
+	ready: z.literal(true),
+	status: z.enum(["recording", "stopped"]).default("recording"),
+	clockId: z.string().min(1).optional(),
+	startedAtEpochMs: z.number().nonnegative(),
+	startedAtMonotonicMs: z.number().nonnegative().optional(),
+	startedAtIso: isoDateSchema,
+	source: z.string().min(1),
+	precisionMs: z.number().positive(),
+	endedAtEpochMs: z.number().nonnegative().optional(),
+	durationMs: z.number().nonnegative().optional(),
+});
 
 export const annotationRegionSchema = endGteStart(
 	z.object({
@@ -635,6 +678,8 @@ const documentSchemaShape = z.object({
 	overlays: z.array(overlaySchema).default([]),
 	zoomRanges: z.array(zoomRegionSchema).default([]),
 	actions: z.array(actionMarkerSchema).default([]),
+	scenes: z.array(sceneSchema).default([]),
+	recordingClock: recordingClockSchema.optional(),
 	legacyEditor: legacyEditorSchema.nullable().default(null),
 });
 
@@ -1078,6 +1123,7 @@ export type AxcutOverlayType = z.infer<typeof overlayTypeSchema>;
 export type AxcutOverlayAnchor = z.infer<typeof overlayAnchorSchema>;
 export type AxcutZoomRegion = z.infer<typeof zoomRegionSchema>;
 export type AxcutActionMarker = z.infer<typeof actionMarkerSchema>;
+export type AxcutRecordingClock = z.infer<typeof recordingClockSchema>;
 export type AxcutCameraTrack = z.infer<typeof cameraTrackSchema>;
 export type AxcutLegacyEditor = z.infer<typeof legacyEditorSchema>;
 export type AxcutDocument = z.infer<typeof documentSchema>;
@@ -1118,6 +1164,7 @@ export function createEmptyDocument(
 		overlays: [],
 		zoomRanges: [],
 		actions: [],
+		scenes: [],
 		legacyEditor: null,
 	});
 }

@@ -25,7 +25,7 @@ vi.mock("@/native/sceneDescription", () => ({
 
 import { toast } from "sonner";
 import { I18nProvider } from "@/contexts/I18nContext";
-import { type AxcutDocument, axcutSchemaVersion } from "@/lib/ai-edition/schema";
+import { type AxcutDocument, axcutSchemaVersion, documentSchema } from "@/lib/ai-edition/schema";
 import { ExportDialog } from "./ExportDialog";
 
 type ElectronAPI = Window["electronAPI"];
@@ -34,7 +34,7 @@ const SAVED_PATH = "/tmp/openscreen/Test_project.mp4";
 
 const noop = () => undefined;
 
-const DOC: AxcutDocument = {
+const DOC: AxcutDocument = documentSchema.parse({
 	schemaVersion: axcutSchemaVersion,
 	project: {
 		id: "proj_1",
@@ -78,7 +78,7 @@ const DOC: AxcutDocument = {
 	annotations: [],
 	zoomRanges: [],
 	legacyEditor: null,
-};
+});
 
 let revealInFolder: ReturnType<typeof vi.fn>;
 

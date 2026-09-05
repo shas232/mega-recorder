@@ -1,9 +1,15 @@
 /**
- * MEGA RECORDER presets are deliberately plain data.  The values under
- * `upstream.editor` are the v2 .openscreen editor keys consumed by the existing
+ * MEGA RECORDER presets are deliberately plain data. The values under
+ * `upstream.editor` are the .openscreen editor keys consumed by the existing
  * renderer/export pipeline; the descriptive fields make the product contract
- * inspectable without loading Electron.
+ * inspectable without loading Electron. They are written to root `editor` for
+ * v2 projects and to Axcut's `legacyEditor` envelope for modern documents.
  */
+
+// The native scene contract supports linear gradients; radial CSS strings would be
+// interpreted as image paths by the native bridge and fail during export. Keep the
+// same blue studio treatment in a form shared by preview and native export.
+const BLUE_STUDIO_WALLPAPER = "linear-gradient(135deg, #2563eb 0%, #172554 58%, #0b1020 100%)";
 
 const BLUE_STUDIO = Object.freeze({
 	contractVersion: 1,
@@ -18,8 +24,8 @@ const BLUE_STUDIO = Object.freeze({
 	}),
 	background: Object.freeze({
 		// `showBlur` is the upstream compositor's background blur toggle.  The
-		// gradient remains a valid wallpaper value in both preview and export.
-		wallpaper: "radial-gradient(ellipse at 50% 35%, #2563eb 0%, #172554 58%, #0b1020 100%)",
+		// linear gradient remains a valid wallpaper value in both preview and export.
+		wallpaper: BLUE_STUDIO_WALLPAPER,
 		blurred: true,
 	}),
 	foregroundCard: Object.freeze({
@@ -55,7 +61,7 @@ const BLUE_STUDIO = Object.freeze({
 			quality: "good",
 		}),
 		editor: Object.freeze({
-			wallpaper: "radial-gradient(ellipse at 50% 35%, #2563eb 0%, #172554 58%, #0b1020 100%)",
+			wallpaper: BLUE_STUDIO_WALLPAPER,
 			showBlur: true,
 			shadowIntensity: 0.35,
 			motionBlurAmount: 0.2,
@@ -95,6 +101,25 @@ export function listPresets() {
 export function applyPresetToProject(project, preset) {
 	if (!project || typeof project !== "object") {
 		throw new TypeError("Project must be a JSON object");
+	}
+	// Axcut documents (schema v3+) expose the legacy OpenScreen editor state
+	// through `legacyEditor`; the renderer and native compositor read that
+	// envelope rather than a v2 root-level `editor`. Keep the document's schema
+	// shape intact so applying a preset cannot strand settings in an ignored key.
+	if (typeof project.schemaVersion === "number" && project.schemaVersion >= 3) {
+		const legacyEditor =
+			project.legacyEditor &&
+			typeof project.legacyEditor === "object" &&
+			!Array.isArray(project.legacyEditor)
+				? project.legacyEditor
+				: {};
+		return {
+			...project,
+			legacyEditor: {
+				...legacyEditor,
+				...preset.upstream.editor,
+			},
+		};
 	}
 	return {
 		...project,

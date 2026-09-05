@@ -299,6 +299,7 @@ function parseRecord(args: string[], cwd: string): CliCommand {
 		cursorMode: "editable-overlay",
 		durationMs: null,
 		projectOut: null,
+		recordingClockPath: null,
 	};
 
 	for (let i = 0; i < args.length; i++) {
@@ -358,6 +359,13 @@ function parseRecord(args: string[], cwd: string): CliCommand {
 					throw new Error(`--project must end in .openscreen, got "${value}"`);
 				}
 				request.projectOut = resolvePath(value, cwd);
+				i = next;
+				break;
+			}
+			case "--clock-file":
+			case "--recording-clock": {
+				const [value, next] = takeValue(args, i, arg);
+				request.recordingClockPath = resolvePath(value, cwd);
 				i = next;
 				break;
 			}

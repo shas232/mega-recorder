@@ -18,7 +18,7 @@ import type {
 	AxcutOverlay,
 	AxcutZoomRegion,
 } from "@/lib/ai-edition/schema";
-import { axcutSchemaVersion, overlaySchema } from "@/lib/ai-edition/schema";
+import { axcutSchemaVersion, documentSchema, overlaySchema } from "@/lib/ai-edition/schema";
 import { getFocusBoundsForScale } from "@/lib/zoomMath/focusUtils";
 import { buildSceneDescription } from "./sceneDescription";
 
@@ -71,7 +71,7 @@ function makeDoc(
 	const clips = overrides.clips ?? [];
 	const createdAt = "2024-01-01T00:00:00.000Z";
 	const baseProject = { id: "p1", title: "Test", createdAt, updatedAt: createdAt };
-	return {
+	const raw = {
 		schemaVersion: axcutSchemaVersion,
 		project: {
 			...baseProject,
@@ -88,14 +88,24 @@ function makeDoc(
 			muteRanges: [],
 			speedRanges: [],
 			captionRanges: [],
+			audioTracks: [],
+			audioMixMode: "mix",
 			...(overrides.timeline ?? {}),
 		},
 		annotations: overrides.annotations ?? [],
 		overlays: overrides.overlays ?? [],
 		zoomRanges: overrides.zoomRanges ?? [],
 		actions: overrides.actions ?? [],
+		scenes: overrides.scenes ?? [],
 		legacyEditor: overrides.legacyEditor ?? null,
 	};
+	try {
+		return documentSchema.parse(raw);
+	} catch {
+		// Keep negative serializer fixtures (for example an asset with no path)
+		// intact so the serializer's defensive skip behavior remains covered.
+		return raw as AxcutDocument;
+	}
 }
 
 // --- background ------------------------------------------------------------

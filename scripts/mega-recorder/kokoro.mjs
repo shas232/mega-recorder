@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const MODEL_ID = "hexgrad/Kokoro-82M";
 const SAMPLE_RATE = 24000;
-const PREFERRED_DEFAULT_VOICE = "af_heart";
+const PREFERRED_DEFAULT_VOICE = "af_sky";
 const FALLBACK_DEFAULT_VOICE = "am_michael";
 const RUNTIME_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "kokoro_runtime.py");
 
@@ -238,3 +238,4 @@ export async function synthesizeWithKokoro({ text, voice, outputPath, env = proc
 
 export const KOKORO_MODEL_ID = MODEL_ID;
 export const KOKORO_SAMPLE_RATE = SAMPLE_RATE;
+export const KOKORO_DEFAULT_VOICE = PREFERRED_DEFAULT_VOICE;

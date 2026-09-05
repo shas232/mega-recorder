@@ -10,8 +10,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getCaptionSettings } from "../captions";
-import type { AxcutDocument } from "../schema";
-import { axcutSchemaVersion } from "../schema";
+import { type AxcutDocument, axcutSchemaVersion, documentSchema } from "../schema";
 import { useProjectStore } from "./projectStore";
 import { clearHistory, undo } from "./undo";
 import { past } from "./undoStack";
@@ -39,7 +38,7 @@ vi.mock("@/native/client", () => ({
 	},
 }));
 
-const docA: AxcutDocument = {
+const docA: AxcutDocument = documentSchema.parse({
 	schemaVersion: axcutSchemaVersion,
 	project: {
 		id: "proj_a",
@@ -72,7 +71,7 @@ const docA: AxcutDocument = {
 	annotations: [],
 	zoomRanges: [],
 	legacyEditor: null,
-};
+});
 
 const docB: AxcutDocument = {
 	...docA,

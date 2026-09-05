@@ -83,9 +83,11 @@ function buildDefaultProject(session: {
 	screenVideoPath: string;
 	webcamVideoPath?: string;
 	cursorCaptureMode?: string;
+	recordingClock?: NonNullable<import("@/lib/cliContracts").CliDoneResult["recordingClock"]>;
 }) {
 	return {
 		version: PROJECT_VERSION,
+		...(session.recordingClock ? { recordingClock: session.recordingClock } : {}),
 		media: {
 			screenVideoPath: session.screenVideoPath,
 			...(session.webcamVideoPath ? { webcamVideoPath: session.webcamVideoPath } : {}),
@@ -105,6 +107,9 @@ export function CliRecordRunner() {
 	const [requestReady, setRequestReady] = useState<CliRecordRequest | null>(null);
 	const phaseRef = useRef<Phase>("init");
 	const recordingStartedAtRef = useRef<number | null>(null);
+	const recordingClockRef = useRef<NonNullable<
+		import("@/lib/cliContracts").CliDoneResult["recordingClock"]
+	> | null>(null);
 	// A stop (SIGINT/stdin) can land while the capture helper is still starting;
 	// remember it and apply as soon as recording flips on.
 	const stopRequestedRef = useRef(false);
@@ -222,27 +227,58 @@ export function CliRecordRunner() {
 	useEffect(() => {
 		const request = requestRef.current;
 		if (recording && recordingStartedAtRef.current === null) {
-			recordingStartedAtRef.current = Date.now();
+			// This is the first renderer-observable recording edge, after the native
+			// helper/browser recorder has accepted the start. Persist the reference
+			// before announcing readiness so a concurrent `actions add --time auto`
+			// command never races a partially-written clock file.
+			const startedAtEpochMs = Date.now();
+			const recordingClock = {
+				schemaVersion: 1,
+				kind: "mega-recorder-recording-clock",
+				ready: true,
+				status: "recording" as const,
+				clockId: `clock_${startedAtEpochMs}_${Math.round(performance.now())}`,
+				startedAtEpochMs,
+				startedAtMonotonicMs: performance.now(),
+				startedAtIso: new Date(startedAtEpochMs).toISOString(),
+				source: "recorder-recording-state",
+				// The epoch sample is millisecond-quantized, but this renderer edge is
+				// observed just after the helper's start acknowledgement. Do not expose
+				// that transport delay as one-millisecond click precision.
+				precisionMs: 50,
+			};
+			recordingClockRef.current = recordingClock;
+			recordingStartedAtRef.current = startedAtEpochMs;
 			setStatus("Recording…");
-			window.electronAPI.cliLog("info", "Recording started");
+			void (async () => {
+				try {
+					await window.electronAPI.cliRecordingClockReady(recordingClock);
+				} catch (error) {
+					window.electronAPI.cliLog("error", `Recording clock was not persisted: ${String(error)}`);
+				}
+				// Only announce after the atomic clock handoff has completed. This is
+				// the synchronization point for a concurrent actions process.
+				window.electronAPI.cliLog("info", "Recording started");
 
-			if (stopRequestedRef.current) {
-				phaseRef.current = "stopping";
-				setStatus("Stopping…");
-				toggleRecordingRef.current();
-				return;
-			}
+				if (stopRequestedRef.current) {
+					phaseRef.current = "stopping";
+					setStatus("Stopping…");
+					toggleRecordingRef.current();
+					return;
+				}
 
-			if (request?.durationMs) {
-				const timer = setTimeout(() => {
-					if (recordingRef.current && phaseRef.current === "recording") {
-						phaseRef.current = "stopping";
-						window.electronAPI.cliLog("info", `Duration reached (${request.durationMs}ms)`);
-						toggleRecordingRef.current();
-					}
-				}, request.durationMs);
-				return () => clearTimeout(timer);
-			}
+				if (request?.durationMs) {
+					setTimeout(() => {
+						if (recordingRef.current && phaseRef.current === "recording") {
+							phaseRef.current = "stopping";
+							window.electronAPI.cliLog("info", `Duration reached (${request.durationMs}ms)`);
+							toggleRecordingRef.current();
+						}
+					}, request.durationMs);
+					// This effect's cleanup cannot reach this asynchronously-created
+					// timer, so the timer also checks recording/phase before stopping.
+				}
+			})();
 		}
 	}, [recording]);
 
@@ -283,7 +319,15 @@ export function CliRecordRunner() {
 					webcamVideoPath: session.webcamVideoPath,
 					cursorDataPath: `${session.screenVideoPath}.cursor.json`,
 					durationMs,
-					...(request?.projectOut ? { projectData: buildDefaultProject(session) } : {}),
+					...(recordingClockRef.current ? { recordingClock: recordingClockRef.current } : {}),
+					...(request?.projectOut
+						? {
+								projectData: buildDefaultProject({
+									...session,
+									recordingClock: recordingClockRef.current ?? undefined,
+								}),
+							}
+						: {}),
 				});
 			} catch (error) {
 				await fail(error);

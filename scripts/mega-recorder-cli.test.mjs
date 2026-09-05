@@ -46,6 +46,8 @@ describe("MEGA RECORDER product layer", () => {
 			aspectRatio: "16:9",
 		});
 		expect(response.preset.background.blurred).toBe(true);
+		expect(response.preset.background.wallpaper).toMatch(/^linear-gradient\(/);
+		expect(response.preset.upstream.editor.wallpaper).toBe(response.preset.background.wallpaper);
 		expect(response.preset.foregroundCard).toMatchObject({
 			padding: 40,
 			shadowIntensity: 0.35,
@@ -76,6 +78,26 @@ describe("MEGA RECORDER product layer", () => {
 			autoFocusAll: true,
 		});
 		expect(source.editor.padding).toBe(2);
+	});
+
+	it("writes Axcut preset settings into legacyEditor for the renderer", () => {
+		const source = {
+			schemaVersion: 7,
+			project: { id: "axcut_1", title: "Modern project" },
+			timeline: { clips: [] },
+			legacyEditor: { customSetting: "keep" },
+		};
+
+		const next = applyPresetToProject(source, getPreset("blue-studio"));
+
+		expect(next).not.toHaveProperty("version");
+		expect(next).not.toHaveProperty("editor");
+		expect(next.legacyEditor).toMatchObject({
+			customSetting: "keep",
+			padding: 40,
+			showBlur: true,
+			cursorSize: 3,
+		});
 	});
 
 	it("keeps the checked-in baseline valid against the project manifest schema", async () => {
@@ -301,6 +323,83 @@ describe("MEGA RECORDER product layer", () => {
 			[8, 20],
 		]);
 		await fs.rm(directory, { recursive: true, force: true });
+	});
+
+	it("crops every clip to a sibling project without touching source media", async () => {
+		const directory = await fs.mkdtemp(path.join(os.tmpdir(), "mega-recorder-crop-"));
+		try {
+			const projectPath = path.join(directory, "demo.openscreen");
+			const project = {
+				schemaVersion: 7,
+				project: { id: "proj_crop_cli", title: "Crop CLI", primaryAssetId: "asset_1" },
+				assets: [
+					{
+						id: "asset_1",
+						kind: "video",
+						label: "Capture",
+						originalPath: "/tmp/capture.mp4",
+						durationSec: 12,
+					},
+				],
+				timeline: {
+					clips: [
+						{
+							id: "clip_1",
+							assetId: "asset_1",
+							sourceStartSec: 0,
+							sourceEndSec: 4,
+							timelineStartSec: 0,
+							timelineEndSec: 4,
+							wordRefs: [],
+							origin: "system",
+							reason: "",
+						},
+						{
+							id: "clip_2",
+							assetId: "asset_1",
+							sourceStartSec: 8,
+							sourceEndSec: 12,
+							timelineStartSec: 4,
+							timelineEndSec: 8,
+							wordRefs: [],
+							origin: "system",
+							reason: "",
+						},
+					],
+					gaps: [],
+					trimRanges: [],
+					muteRanges: [],
+					speedRanges: [],
+					captionRanges: [],
+					audioTracks: [],
+				},
+				annotations: [],
+				zoomRanges: [],
+				legacyEditor: null,
+			};
+			const original = JSON.stringify(project);
+			await fs.writeFile(projectPath, original, "utf8");
+
+			const response = await runCommand(["edit", "crop", projectPath, "--top", "0.08"]);
+			const outputPath = path.join(directory, "demo.cropped.openscreen");
+			expect(response).toMatchObject({
+				ok: true,
+				command: "edit crop",
+				operation: "crop",
+				outputPath,
+				clipCount: 2,
+				mediaTouched: false,
+				cropRegion: { x: 0, y: 0.08, width: 1, height: 0.92 },
+			});
+			const saved = JSON.parse(await fs.readFile(outputPath, "utf8"));
+			expect(saved.timeline.clips.map((clip) => clip.cropRegion)).toEqual([
+				{ x: 0, y: 0.08, width: 1, height: 0.92 },
+				{ x: 0, y: 0.08, width: 1, height: 0.92 },
+			]);
+			expect(await fs.readFile(projectPath, "utf8")).toBe(original);
+		} finally {
+			await fs.rm(directory, { recursive: true, force: true });
+		}
 	});
 
 	it.skipIf(spawnSync("ffprobe", ["-version"], { stdio: "ignore" }).status !== 0)(

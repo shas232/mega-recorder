@@ -1,9 +1,8 @@
 name: Build Electron App
 
 on:
-  push:
-    tags:
-      - "v*"
+  # MEGA Recorder tags pin source for the standalone skill. They are not
+  # OpenScreen installer releases; packaging remains an explicit developer action.
   workflow_dispatch:
     inputs:
       arch:

@@ -8,13 +8,13 @@
 import "@testing-library/jest-dom";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type AxcutDocument, axcutSchemaVersion } from "../schema";
+import { type AxcutDocument, axcutSchemaVersion, documentSchema } from "../schema";
 import { useProjectStore } from "./projectStore";
 import { clearHistory, useUndoRedoShortcuts } from "./undo";
 import { pushHistory } from "./undoStack";
 
 function doc(title: string): AxcutDocument {
-	return {
+	return documentSchema.parse({
 		schemaVersion: axcutSchemaVersion,
 		project: {
 			id: "proj_test",
@@ -36,7 +36,7 @@ function doc(title: string): AxcutDocument {
 		annotations: [],
 		zoomRanges: [],
 		legacyEditor: null,
-	};
+	});
 }
 
 const onAfter = vi.fn();

@@ -357,6 +357,7 @@ export async function createBrowserEditorServer({
 							inspection: true,
 							save: true,
 							media: true,
+							crop: true,
 							nativeCapture: false,
 							export: false,
 						},
