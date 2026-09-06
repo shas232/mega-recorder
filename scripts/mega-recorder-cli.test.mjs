@@ -35,6 +35,21 @@ function writeSilentWav(samplePath, durationSec = 1.25) {
 	return fs.writeFile(samplePath, buffer);
 }
 
+async function withAnimationRuntime(source, callback) {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), "mega-recorder-remotion-runtime-"));
+	const runtimePath = path.join(directory, "remotion-runtime.mjs");
+	const previous = process.env.MEGA_RECORDER_REMOTION_RUNTIME;
+	await fs.writeFile(runtimePath, source, "utf8");
+	process.env.MEGA_RECORDER_REMOTION_RUNTIME = runtimePath;
+	try {
+		return await callback(runtimePath);
+	} finally {
+		if (previous === undefined) delete process.env.MEGA_RECORDER_REMOTION_RUNTIME;
+		else process.env.MEGA_RECORDER_REMOTION_RUNTIME = previous;
+		await fs.rm(directory, { recursive: true, force: true });
+	}
+}
+
 describe("MEGA RECORDER product layer", () => {
 	it("returns the deterministic blue-studio preset through the agent CLI", async () => {
 		const response = await runCommand(["preset", "show", "blue-studio"]);
@@ -184,9 +199,28 @@ describe("MEGA RECORDER product layer", () => {
 	});
 
 	it("reports overall readiness only when required local checks are ready", async () => {
-		const response = await runCommand(["doctor"]);
-		expect(response.ready).toBe(response.checks.ffprobe.available && response.checks.kokoro.ready);
-	});
+		const fakeRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "mega-recorder-kokoro-doctor-"));
+		const fakePython = path.join(fakeRuntime, "python");
+		const fakePython3 = path.join(fakeRuntime, "python3");
+		const previousPython = process.env.MEGA_RECORDER_KOKORO_PYTHON;
+		const previousPath = process.env.PATH;
+		try {
+			await fs.symlink(process.execPath, fakePython);
+			await fs.symlink(process.execPath, fakePython3);
+			process.env.MEGA_RECORDER_KOKORO_PYTHON = fakePython;
+			process.env.PATH = fakeRuntime;
+			const response = await runCommand(["doctor"]);
+			expect(response.ready).toBe(
+				response.checks.ffprobe.available && response.checks.kokoro.ready,
+			);
+		} finally {
+			if (previousPython === undefined) delete process.env.MEGA_RECORDER_KOKORO_PYTHON;
+			else process.env.MEGA_RECORDER_KOKORO_PYTHON = previousPython;
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+			await fs.rm(fakeRuntime, { recursive: true, force: true });
+		}
+	}, 60_000);
 
 	it("rejects inherited presets, unknown options, and extra positional arguments", async () => {
 		expect(await runCommand(["preset", "show", "__proto__"])).toMatchObject({
@@ -220,6 +254,127 @@ describe("MEGA RECORDER product layer", () => {
 		expect(await runCommand(["verify", "/tmp/demo.mp4", "--width="])).toMatchObject({
 			ok: false,
 			error: { code: "CLI_ARGUMENT_ERROR" },
+		});
+	});
+
+	it("diagnoses a missing optional animation runtime without affecting recording commands", async () => {
+		const previous = process.env.MEGA_RECORDER_REMOTION_RUNTIME;
+		process.env.MEGA_RECORDER_REMOTION_RUNTIME = path.join(
+			os.tmpdir(),
+			"mega-recorder-remotion-runtime-that-does-not-exist.mjs",
+		);
+		try {
+			const response = await runCommand(["animation", "doctor"]);
+			expect(response).toMatchObject({
+				ok: false,
+				command: "animation doctor",
+				error: { code: "REMOTION_RUNTIME_UNAVAILABLE" },
+			});
+		} finally {
+			if (previous === undefined) delete process.env.MEGA_RECORDER_REMOTION_RUNTIME;
+			else process.env.MEGA_RECORDER_REMOTION_RUNTIME = previous;
+		}
+	});
+
+	it("validates animation arguments before loading the optional runtime", async () => {
+		expect(await runCommand(["animation", "render"])).toMatchObject({
+			ok: false,
+			command: "animation render",
+			error: { code: "CLI_ARGUMENT_ERROR" },
+		});
+		expect(await runCommand(["animation", "init", "--mode", "invalid"])).toMatchObject({
+			ok: false,
+			command: "animation init",
+			error: { code: "CLI_ARGUMENT_ERROR" },
+		});
+		expect(await runCommand(["animation", "doctor", "--browser-path", "/tmp/brave"])).toMatchObject(
+			{
+				ok: false,
+				command: "animation doctor",
+				error: { code: "CLI_ARGUMENT_ERROR" },
+			},
+		);
+	});
+
+	it("refuses to overwrite an animation init target and dispatches source-only runtime calls", async () => {
+		const source = `
+		export async function doctor(options) { return { marker: "doctor", options }; }
+		export async function setup(options) { return { marker: "setup", options }; }
+		export async function init(options) { return { marker: "init", options }; }
+		export async function validate(options) { return { marker: "validate", options }; }
+		export async function render(options) { return { marker: "render", options }; }
+		export async function preview(options) { return { marker: "preview", options }; }
+	`;
+		await withAnimationRuntime(source, async () => {
+			const directory = await fs.mkdtemp(path.join(os.tmpdir(), "mega-recorder-animation-cli-"));
+			try {
+				const existing = path.join(directory, "existing.json");
+				await fs.writeFile(existing, "keep-me", "utf8");
+				const refused = await runCommand(["animation", "init", "--output", existing]);
+				expect(refused).toMatchObject({
+					ok: false,
+					command: "animation init",
+					error: { code: "OUTPUT_EXISTS", path: existing },
+				});
+				expect(await fs.readFile(existing, "utf8")).toBe("keep-me");
+
+				const project = path.join(directory, "animation.json");
+				const doctor = await runCommand(["animation", "doctor"]);
+				expect(doctor).toMatchObject({ ok: true, command: "animation doctor", marker: "doctor" });
+
+				const setup = await runCommand(["animation", "setup", "--skip-install"]);
+				expect(setup).toMatchObject({
+					ok: true,
+					command: "animation setup",
+					marker: "setup",
+					options: { install: false },
+				});
+
+				const initialized = await runCommand([
+					"animation",
+					"init",
+					"--output",
+					project,
+					"--mode",
+					"mixed",
+					"--width",
+					"1280",
+					"--height",
+					"720",
+					"--fps",
+					"30",
+				]);
+				expect(initialized).toMatchObject({ ok: true, command: "animation init", marker: "init" });
+				expect(initialized.options).toMatchObject({
+					outputPath: project,
+					mode: "mixed",
+					width: 1280,
+					height: 720,
+					fps: 30,
+				});
+
+				const rendered = await runCommand([
+					"animation",
+					"render",
+					project,
+					"--output",
+					path.join(directory, "out.mp4"),
+					"--browser-path",
+					"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+				]);
+				expect(rendered).toMatchObject({ ok: true, command: "animation render", marker: "render" });
+				expect(rendered.options).toMatchObject({ manifestPath: project });
+
+				const preview = await runCommand(["animation", "preview", project, "--port", "4311"]);
+				expect(preview).toMatchObject({
+					ok: true,
+					command: "animation preview",
+					marker: "preview",
+					options: { manifestPath: project, port: 4311 },
+				});
+			} finally {
+				await fs.rm(directory, { recursive: true, force: true });
+			}
 		});
 	});
 

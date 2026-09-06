@@ -18,6 +18,12 @@ npm run --silent mega-recorder -- scenes add demo.scenes.json --name "Save setti
 npm run --silent mega-recorder -- scenes apply demo.openscreen --manifest demo.scenes.json
 npm run --silent mega-recorder -- edit overlay add demo.openscreen --start 0.4 --end 2.2 --text "MEGA Recorder" --type title --position 50,12 --size 76,14
 npm run --silent mega-recorder -- edit delete demo.openscreen --start 12.0 --end 12.4 --output demo.cut.openscreen
+npm run --silent mega-recorder -- animation doctor
+npm run --silent mega-recorder -- animation setup
+npm run --silent mega-recorder -- animation init ./demo.animation.json
+npm run --silent mega-recorder -- animation validate ./demo.animation.json
+npm run --silent mega-recorder -- animation render ./demo.animation.json
+npm run --silent mega-recorder -- animation preview ./demo.animation.json
 ```
 
 The `blue-studio` preset targets a 1920×1080, 60 fps output, a blurred blue
@@ -28,6 +34,29 @@ all zooms and keeps cursor-dwell auto-zoom suggestions enabled. Its
 `upstream.editor` mapping uses the existing
 `.openscreen` editor schema; optional cursor extension keys are carried into
 the native compositor's existing `legacyEditor` bridge.
+
+## Optional Remotion animation
+
+The `animation` commands are an opt-in integration for local Remotion 4.0.521
+rendering. `animation doctor` checks the isolated runtime; `animation setup`
+installs its dependencies under `integrations/remotion`; `animation init`
+writes a starter manifest; `validate` checks that manifest; `render` writes its
+declared output; and `preview` starts a loopback-only server and returns its
+URL. Preview does not open a browser; open the URL in the Codex in-app browser
+or Brave.
+
+The manifest contract is [`integrations/remotion/manifest.schema.json`](../integrations/remotion/manifest.schema.json).
+It supports silent `animation` scenes and `mixed` scenes containing local video
+and audio alongside title/diagram elements and transitions. Remote assets are
+disabled by default. See the complete examples and limitations in
+[`docs/remotion.md`](remotion.md).
+
+This integration is optional by design. Recording-only work does not require
+Remotion, its dependencies, Electron/native capture, or Kokoro. Silent
+animation work also does not require those recording dependencies. A successful
+manifest validation is not render evidence; verify the emitted media after
+rendering. Remotion's separate license terms and eligibility boundary are
+documented in [`THIRD-PARTY-NOTICES.md`](../THIRD-PARTY-NOTICES.md).
 
 ## Local Kokoro
 

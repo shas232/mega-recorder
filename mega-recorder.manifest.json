@@ -1,7 +1,7 @@
 {
 	"contract": "mega-recorder-project",
 	"schemaVersion": 1,
-	"productRelease": "v0.3.2",
+	"productRelease": "v0.4.0",
 	"project": {
 		"name": "MEGA RECORDER",
 		"kind": "team-fork-baseline",
@@ -33,7 +33,18 @@
 			"sampleRate": 24000,
 			"network": "disabled"
 		},
-		"verification": "ffprobe"
+		"verification": "ffprobe",
+		"animation": {
+			"optional": true,
+			"runtime": "integrations/remotion",
+			"remotionVersion": "4.0.521",
+			"manifestSchema": "integrations/remotion/manifest.schema.json",
+			"modes": ["animation", "mixed"],
+			"commands": ["doctor", "setup", "init", "validate", "render", "preview"],
+			"localAssetsByDefault": true,
+			"requiredForRecording": false,
+			"license": "https://www.remotion.dev/license"
+		}
 	},
 	"source": {
 		"selectedFrom": "https://github.com/getopenscreen/openscreen.git",
@@ -54,6 +65,7 @@
 		"electron/",
 		"electron/native/screencapturekit/",
 		"crates/",
-		"scripts/"
+		"scripts/",
+		"integrations/remotion/"
 	]
 }

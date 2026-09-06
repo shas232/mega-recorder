@@ -1,0 +1,134 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://github.com/shas232/mega-recorder/integrations/remotion/manifest.schema.json",
+	"title": "MEGA RECORDER Remotion scene manifest",
+	"type": "object",
+	"additionalProperties": false,
+	"required": ["schemaVersion", "mode", "fps", "width", "height", "scenes"],
+	"properties": {
+		"schemaVersion": { "const": 1 },
+		"mode": { "enum": ["animation", "mixed"] },
+		"fps": { "type": "integer", "minimum": 1, "maximum": 120 },
+		"width": { "type": "integer", "minimum": 16 },
+		"height": { "type": "integer", "minimum": 16 },
+		"allowRemoteAssets": { "type": "boolean", "default": false },
+		"entryPoint": { "type": "string", "minLength": 1 },
+		"output": { "type": "string", "minLength": 1 },
+		"scenes": {
+			"type": "array",
+			"minItems": 1,
+			"items": { "$ref": "#/$defs/scene" }
+		}
+	},
+	"$defs": {
+		"transition": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["type", "durationInFrames"],
+			"properties": {
+				"type": { "enum": ["none", "fade", "slide"] },
+				"durationInFrames": { "type": "integer", "minimum": 0 },
+				"direction": { "enum": ["from-left", "from-right", "from-top", "from-bottom"] }
+			}
+		},
+		"title": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["type", "text"],
+			"properties": {
+				"type": { "const": "title" },
+				"text": { "type": "string", "minLength": 1 },
+				"subtitle": { "type": "string" },
+				"x": { "type": "number", "minimum": 0, "maximum": 100 },
+				"y": { "type": "number", "minimum": 0, "maximum": 100 },
+				"align": { "enum": ["left", "center", "right"] },
+				"color": { "type": "string" },
+				"accent": { "type": "string" }
+			}
+		},
+		"diagramNode": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["id", "label", "x", "y"],
+			"properties": {
+				"id": { "type": "string", "minLength": 1 },
+				"label": { "type": "string", "minLength": 1 },
+				"x": { "type": "number", "minimum": 0, "maximum": 100 },
+				"y": { "type": "number", "minimum": 0, "maximum": 100 },
+				"color": { "type": "string" }
+			}
+		},
+		"diagramEdge": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["from", "to"],
+			"properties": {
+				"from": { "type": "string", "minLength": 1 },
+				"to": { "type": "string", "minLength": 1 },
+				"label": { "type": "string" }
+			}
+		},
+		"diagram": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["type", "nodes"],
+			"properties": {
+				"type": { "const": "diagram" },
+				"title": { "type": "string" },
+				"nodes": { "type": "array", "items": { "$ref": "#/$defs/diagramNode" } },
+				"edges": { "type": "array", "items": { "$ref": "#/$defs/diagramEdge" } },
+				"x": { "type": "number", "minimum": 0, "maximum": 100 },
+				"y": { "type": "number", "minimum": 0, "maximum": 100 },
+				"width": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
+				"height": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 }
+			}
+		},
+		"video": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["type", "src"],
+			"properties": {
+				"type": { "const": "video" },
+				"src": { "type": "string", "minLength": 1 },
+				"startFrom": { "type": "integer", "minimum": 0 },
+				"endAt": { "type": "integer", "minimum": 1 },
+				"fit": { "enum": ["contain", "cover"] },
+				"opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+				"volume": { "type": "number", "minimum": 0, "maximum": 1 },
+				"muted": { "type": "boolean" }
+			}
+		},
+		"audio": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["src", "startFrame", "durationInFrames"],
+			"properties": {
+				"src": { "type": "string", "minLength": 1 },
+				"startFrame": { "type": "integer", "minimum": 0 },
+				"durationInFrames": { "type": "integer", "minimum": 1 },
+				"trimBefore": { "type": "integer", "minimum": 0 },
+				"volume": { "type": "number", "minimum": 0, "maximum": 1 }
+			}
+		},
+		"element": {
+			"oneOf": [
+				{ "$ref": "#/$defs/title" },
+				{ "$ref": "#/$defs/diagram" },
+				{ "$ref": "#/$defs/video" }
+			]
+		},
+		"scene": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["id", "durationInFrames", "elements"],
+			"properties": {
+				"id": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9_-]+$" },
+				"durationInFrames": { "type": "integer", "minimum": 1 },
+				"background": { "type": "string" },
+				"elements": { "type": "array", "items": { "$ref": "#/$defs/element" } },
+				"audio": { "type": "array", "items": { "$ref": "#/$defs/audio" } },
+				"transition": { "$ref": "#/$defs/transition" }
+			}
+		}
+	}
+}

@@ -23,7 +23,7 @@ from typing import Any, Iterable
 COMMAND = "bootstrap"
 PRODUCT_URL = "https://github.com/shas232/mega-recorder.git"
 # The published MEGA RECORDER release. A caller may explicitly override the ref.
-PRODUCT_REF = "v0.3.2"
+PRODUCT_REF = "v0.4.0"
 PRODUCT_BRANCH = "main"
 
 # A checkout is only useful to the skill when the product layer is present. Keep
@@ -58,6 +58,17 @@ REQUIRED_CAPABILITIES: dict[str, dict[str, tuple[str, ...]]] = {
     "recordingClock": {
         "files": ("scripts/mega-recorder/recording-clock.mjs",),
         "markers": ("readRecordingClock", "timestampFromRecordingClock"),
+    },
+}
+
+# Remotion is an optional animation-only integration. Keep it visible in the
+# assessment so callers can explain why an animation command is unavailable,
+# but do not make it part of product compatibility: recording-only workflows
+# must not require a Remotion install (or any animation runtime at all).
+OPTIONAL_CAPABILITIES: dict[str, dict[str, tuple[str, ...]]] = {
+    "remotion": {
+        "files": ("scripts/mega-recorder/remotion.mjs",),
+        "markers": (),
     },
 }
 
@@ -107,11 +118,13 @@ def declared_product_ref(candidate: Path) -> str | None:
     return None
 
 
-def capability_status(candidate: Path) -> dict[str, Any]:
+def capability_status(
+    candidate: Path, specs: dict[str, dict[str, tuple[str, ...]]] = REQUIRED_CAPABILITIES
+) -> dict[str, Any]:
     """Return static capability evidence for an existing checkout."""
 
     result: dict[str, Any] = {}
-    for name, spec in REQUIRED_CAPABILITIES.items():
+    for name, spec in specs.items():
         missing_files = [relative for relative in spec["files"] if not (candidate / relative).is_file()]
         missing_markers: list[str] = []
         marker_file = candidate / spec["files"][0]
@@ -206,6 +219,7 @@ def inspect_repo(candidate: Path, expected_ref: str = PRODUCT_REF) -> dict[str, 
     candidate = absolute(candidate)
     structural = valid_repo(candidate)
     capabilities = capability_status(candidate) if structural else {}
+    optional_capabilities = capability_status(candidate, OPTIONAL_CAPABILITIES) if structural else {}
     git = git_checkout_status(candidate) if structural else {"isGit": False, "dirty": False, "changedFiles": 0}
     declared_ref = declared_product_ref(candidate) if structural else None
     ref = ref_status(candidate, expected_ref, declared_ref, git) if structural else {
@@ -232,6 +246,10 @@ def inspect_repo(candidate: Path, expected_ref: str = PRODUCT_REF) -> dict[str, 
         "git": git,
         "dirty": bool(git.get("dirty")),
         "capabilities": capabilities,
+        "optionalCapabilities": optional_capabilities,
+        "missingOptionalCapabilities": [
+            name for name, details in optional_capabilities.items() if not details["ok"]
+        ],
         "missingCapabilities": missing_capabilities,
         "reason": reason,
     }
@@ -427,6 +445,7 @@ def bootstrap_repo(
             "release": existing.get("release"),
             "ref": existing.get("ref"),
             "capabilities": existing.get("capabilities"),
+            "optionalCapabilities": existing.get("optionalCapabilities"),
             "dirty": existing.get("dirty", False),
             "runtime": runtime_status(destination),
         }
@@ -472,6 +491,7 @@ def bootstrap_repo(
                 "requestedRef": ref or PRODUCT_REF,
                 "release": source_assessment.get("release"),
                 "capabilities": source_assessment.get("capabilities"),
+                "optionalCapabilities": source_assessment.get("optionalCapabilities"),
                 "dirty": source_assessment.get("dirty", False),
                 **destination_details,
             }
@@ -515,6 +535,7 @@ def main() -> int:
                         "release": assessment.get("release"),
                         "ref": assessment.get("ref"),
                         "capabilities": assessment.get("capabilities"),
+                        "optionalCapabilities": assessment.get("optionalCapabilities"),
                         "dirty": assessment.get("dirty", False),
                         "runtime": runtime_status(candidate),
                     }
@@ -529,6 +550,7 @@ def main() -> int:
                         "release": assessment.get("release"),
                         "ref": assessment.get("ref"),
                         "missingCapabilities": assessment.get("missingCapabilities", []),
+                        "missingOptionalCapabilities": assessment.get("missingOptionalCapabilities", []),
                         "dirty": assessment.get("dirty", False),
                     }
                 )
