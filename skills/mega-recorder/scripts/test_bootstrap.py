@@ -44,19 +44,19 @@ def make_checkout(root: Path, release: str) -> Path:
 
 class BootstrapTests(unittest.TestCase):
     def test_pins_next_product_release(self) -> None:
-        self.assertEqual(bootstrap.PRODUCT_REF, "v0.3.2")
+        self.assertEqual(bootstrap.PRODUCT_REF, "v0.4.0")
 
     def test_rejects_old_release_even_when_file_shape_matches(self) -> None:
         with tempfile.TemporaryDirectory(prefix="mega-recorder-bootstrap-test-") as temporary:
             checkout = make_checkout(Path(temporary), "v0.3.0")
-            assessment = bootstrap.inspect_repo(checkout)
+            assessment = bootstrap.inspect_repo(checkout, "v0.4.0")
             self.assertFalse(assessment["compatible"])
             self.assertIn("compatible ref", assessment["reason"])
             self.assertEqual(assessment["release"], "v0.3.0")
 
     def test_accepts_dirty_compatible_checkout_without_touching_it(self) -> None:
         with tempfile.TemporaryDirectory(prefix="mega-recorder-bootstrap-test-") as temporary:
-            checkout = make_checkout(Path(temporary), "v0.3.2")
+            checkout = make_checkout(Path(temporary), "v0.4.0")
             subprocess.run(["git", "init", "-q"], cwd=checkout, check=True)
             subprocess.run(["git", "add", "."], cwd=checkout, check=True)
             subprocess.run(
@@ -73,7 +73,7 @@ class BootstrapTests(unittest.TestCase):
 
     def test_clean_checkout_cannot_claim_latest_release_with_a_stale_marker(self) -> None:
         with tempfile.TemporaryDirectory(prefix="mega-recorder-bootstrap-test-") as temporary:
-            checkout = make_checkout(Path(temporary), "v0.3.2")
+            checkout = make_checkout(Path(temporary), "v0.4.0")
             subprocess.run(["git", "init", "-q"], cwd=checkout, check=True)
             subprocess.run(["git", "add", "."], cwd=checkout, check=True)
             subprocess.run(
@@ -89,8 +89,8 @@ class BootstrapTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="mega-recorder-bootstrap-test-") as temporary:
             root = Path(temporary)
             old = make_checkout(root / "openscreen", "v0.3.0")
-            destination, details = bootstrap.choose_destination(root, "v0.3.2", False)
-            self.assertEqual(destination, root / "openscreen-v0.3.2")
+            destination, details = bootstrap.choose_destination(root, "v0.4.0", False)
+            self.assertEqual(destination, root / "openscreen-v0.4.0")
             self.assertTrue(old.is_dir())
             self.assertTrue(details["isolated"])
             self.assertEqual(details["preservedPath"], str(old))
@@ -98,7 +98,7 @@ class BootstrapTests(unittest.TestCase):
     def test_force_bootstrap_uses_default_destination_when_empty(self) -> None:
         with tempfile.TemporaryDirectory(prefix="mega-recorder-bootstrap-test-") as temporary:
             root = Path(temporary)
-            destination, details = bootstrap.choose_destination(root, "v0.3.2", True)
+            destination, details = bootstrap.choose_destination(root, "v0.4.0", True)
             self.assertEqual(destination, root / "openscreen")
             self.assertEqual(details, {})
 
@@ -115,6 +115,24 @@ class BootstrapTests(unittest.TestCase):
             configured = root / "configured"
             args = type("BootstrapArgs", (), {"root": str(configured), "repo": str(old)})()
             self.assertEqual(bootstrap.bootstrap_root(args, {}), configured.resolve())
+
+    def test_remotion_is_reported_but_not_required_for_recording_checkout(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="mega-recorder-bootstrap-test-") as temporary:
+            checkout = make_checkout(Path(temporary), "v0.4.0")
+            assessment = bootstrap.inspect_repo(checkout)
+            self.assertTrue(assessment["compatible"])
+            self.assertEqual(assessment["missingOptionalCapabilities"], ["remotion"])
+            self.assertFalse(assessment["optionalCapabilities"]["remotion"]["ok"])
+
+    def test_remotion_capability_is_file_based(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="mega-recorder-bootstrap-test-") as temporary:
+            checkout = make_checkout(Path(temporary), "v0.4.0")
+            remotion = checkout / "scripts" / "mega-recorder" / "remotion.mjs"
+            remotion.write_text("export {}\n", encoding="utf-8")
+            assessment = bootstrap.inspect_repo(checkout)
+            self.assertTrue(assessment["compatible"])
+            self.assertTrue(assessment["optionalCapabilities"]["remotion"]["ok"])
+            self.assertEqual(assessment["missingOptionalCapabilities"], [])
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ import { realpathSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
 	ACTION_MANIFEST_SCHEMA_VERSION,
 	addActionToManifest,
@@ -78,6 +78,12 @@ const USAGE = [
 	"  mega-recorder preset apply <name> --project <file> [--output <file>] [--in-place]",
 	"  mega-recorder kokoro doctor",
 	"  mega-recorder kokoro synthesize (--text <text> | --text-file <file>) [options]",
+	"  mega-recorder animation doctor",
+	"  mega-recorder animation setup [--skip-install]",
+	"  mega-recorder animation init [output] [--mode animation|mixed] [--width <px>] [--height <px>] [--fps <n>]",
+	"  mega-recorder animation validate <project>",
+	"  mega-recorder animation render <project> [--output <file>] [--browser-path <path>] [--force]",
+	"  mega-recorder animation preview <project> [--port <n>]",
 	"  mega-recorder verify <media> [options]",
 	"  mega-recorder actions start [project] --output <manifest> [--clock-file <file>]",
 	"  mega-recorder actions add <manifest> --time <seconds|auto> --label <text> (--point <x,y> | --rect <x,y,w,h>) [--clock-file <file>] [--recording <video>] [--output <manifest>]",
@@ -255,6 +261,271 @@ async function readBaseline() {
 		return await readJson(BASELINE_PATH);
 	} catch {
 		return { project: {} };
+	}
+}
+
+const ANIMATION_RUNTIME_DEFAULT = path.join(SCRIPT_DIR, "mega-recorder", "remotion.mjs");
+const ANIMATION_PREVIEW_RUNTIME = path.join(SCRIPT_DIR, "mega-recorder", "remotion-preview.mjs");
+
+function animationRuntimePath(action = "") {
+	if (process.env.MEGA_RECORDER_REMOTION_RUNTIME) {
+		return expandPath(process.env.MEGA_RECORDER_REMOTION_RUNTIME);
+	}
+	return action === "preview" ? ANIMATION_PREVIEW_RUNTIME : ANIMATION_RUNTIME_DEFAULT;
+}
+
+async function loadAnimationRuntime(action) {
+	const runtimePath = animationRuntimePath(action);
+	try {
+		return { runtime: await import(pathToFileURL(runtimePath).href), runtimePath };
+	} catch (error) {
+		const missingRuntime =
+			error?.code === "ERR_MODULE_NOT_FOUND" ||
+			error?.code === "MODULE_NOT_FOUND" ||
+			(error instanceof Error && /Cannot find module|Cannot find package/.test(error.message));
+		if (missingRuntime) {
+			throw Object.assign(
+				new Error(
+					"The optional Remotion runtime is unavailable. Run `animation setup` or install the runtime in this checkout.",
+				),
+				{
+					code: "REMOTION_RUNTIME_UNAVAILABLE",
+					path: runtimePath,
+				},
+			);
+		}
+		throw Object.assign(
+			new Error(`Unable to load the optional Remotion runtime: ${error.message}`),
+			{
+				code: "REMOTION_RUNTIME_LOAD_FAILED",
+				path: runtimePath,
+				cause: error,
+			},
+		);
+	}
+}
+
+async function invokeAnimationRuntime(action, options = {}) {
+	const { runtime, runtimePath } = await loadAnimationRuntime(action);
+	const handler = runtime[action];
+	if (typeof handler !== "function") {
+		throw Object.assign(new Error(`Remotion runtime does not export ${action}()`), {
+			code: "REMOTION_RUNTIME_INVALID",
+			path: runtimePath,
+		});
+	}
+	const response = await handler(options);
+	if (response && typeof response === "object" && !Array.isArray(response)) {
+		const child = action === "preview" ? response.process : undefined;
+		const closePreview =
+			action === "preview" && typeof runtime.closePreview === "function"
+				? () => runtime.closePreview()
+				: undefined;
+		const { process: _process, ...fields } = response;
+		return {
+			...fields,
+			...(closePreview ? { server: { close: closePreview } } : child ? { server: child } : {}),
+			ok: response.ok !== false,
+			command: `animation ${action}`,
+		};
+	}
+	return result(`animation ${action}`, { value: response });
+}
+
+const ANIMATION_OPTIONS = {
+	doctor: new Set(),
+	setup: new Set(["--skip-install"]),
+	init: new Set([
+		"--output",
+		"--out",
+		"-o",
+		"--project",
+		"--config",
+		"-p",
+		"--mode",
+		"--width",
+		"--height",
+		"--fps",
+		"--force",
+		"--overwrite",
+	]),
+	validate: new Set(["--project", "--config", "-p"]),
+	render: new Set([
+		"--project",
+		"--config",
+		"-p",
+		"--output",
+		"--out",
+		"-o",
+		"--browser-path",
+		"--force",
+		"--overwrite",
+	]),
+	preview: new Set(["--project", "--config", "-p", "--port"]),
+};
+
+function animationParsed(tokens, command, { positional = 1, allowed = new Set() } = {}) {
+	const parsed = parseTokens(tokens);
+	validateParsedOptions(parsed, allowed, command);
+	validateRequiredValueOptions(
+		parsed,
+		[
+			"--project",
+			"--config",
+			"-p",
+			"--output",
+			"--out",
+			"-o",
+			"--mode",
+			"--width",
+			"--height",
+			"--fps",
+			"--port",
+			"--browser-path",
+		],
+		command,
+	);
+	validatePositionalCount(parsed, positional, command);
+	return parsed;
+}
+
+function animationPath(parsed, optionNames, positional, label) {
+	const named = optionValue(parsed, ...optionNames);
+	if (named !== undefined && positional !== undefined) {
+		throw Object.assign(new Error(`Use either ${label} or the positional project path, not both`), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	}
+	const value = named ?? positional;
+	return value === undefined ? undefined : expandPath(value);
+}
+
+function animationBrowser(parsed) {
+	return optionValue(parsed, "--browser-path");
+}
+
+function animationForce(parsed) {
+	return parsed.flags.has("--force") || parsed.flags.has("--overwrite");
+}
+
+async function assertAnimationOutputAvailable(outputPath, force) {
+	if (!outputPath || force) return;
+	try {
+		await fs.access(outputPath);
+	} catch (error) {
+		if (error?.code === "ENOENT") return;
+		throw error;
+	}
+	throw Object.assign(new Error(`Output already exists: ${outputPath}`), {
+		code: "OUTPUT_EXISTS",
+		path: outputPath,
+	});
+}
+
+function animationNumeric(parsed, names, label, options = {}) {
+	return numberValue(parsed, names, label, options);
+}
+
+async function animationCommand(tokens) {
+	const action = tokens.shift() ?? "doctor";
+	const command = `animation ${action}`;
+	const allowed = ANIMATION_OPTIONS[action];
+	if (!allowed) {
+		throw Object.assign(new Error(`Unknown animation command: ${action}`), {
+			code: "CLI_ARGUMENT_ERROR",
+		});
+	}
+	if (action === "doctor") {
+		animationParsed(tokens, command, { positional: 0, allowed });
+		return invokeAnimationRuntime("doctor");
+	}
+	if (action === "setup") {
+		const parsed = animationParsed(tokens, command, { positional: 0, allowed });
+		return invokeAnimationRuntime("setup", {
+			install: !parsed.flags.has("--skip-install"),
+		});
+	}
+	if (action === "init") {
+		const parsed = animationParsed(tokens, command, { positional: 1, allowed });
+		const outputPath = animationPath(
+			parsed,
+			["--output", "--out", "-o", "--project", "--config", "-p"],
+			parsed.positional[0],
+			"--output",
+		);
+		const resolvedOutput = outputPath ?? path.resolve("remotion-project.json");
+		await assertAnimationOutputAvailable(resolvedOutput, animationForce(parsed));
+		const mode = optionValue(parsed, "--mode") ?? "animation";
+		if (mode !== "animation" && mode !== "mixed") {
+			throw Object.assign(new Error("--mode must be animation or mixed"), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		}
+		return invokeAnimationRuntime("init", {
+			outputPath: resolvedOutput,
+			mode,
+			width: animationNumeric(parsed, ["--width"], "--width", { integer: true, min: 1 }),
+			height: animationNumeric(parsed, ["--height"], "--height", { integer: true, min: 1 }),
+			fps: animationNumeric(parsed, ["--fps"], "--fps", { integer: true, min: 1 }),
+			overwrite: animationForce(parsed),
+		});
+	}
+	if (action === "validate") {
+		const parsed = animationParsed(tokens, command, { positional: 1, allowed });
+		const projectPath = animationPath(
+			parsed,
+			["--project", "--config", "-p"],
+			parsed.positional[0],
+			"--project",
+		);
+		if (!projectPath) {
+			throw Object.assign(new Error("animation validate requires a project path"), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		}
+		return invokeAnimationRuntime("validate", {
+			manifestPath: projectPath,
+		});
+	}
+	if (action === "render") {
+		const parsed = animationParsed(tokens, command, { positional: 1, allowed });
+		const projectPath = animationPath(
+			parsed,
+			["--project", "--config", "-p"],
+			parsed.positional[0],
+			"--project",
+		);
+		if (!projectPath) {
+			throw Object.assign(new Error("animation render requires a project path"), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		}
+		const outputPath = optionValue(parsed, "--output", "--out", "-o");
+		const resolvedOutput = outputPath ? expandPath(outputPath) : undefined;
+		return invokeAnimationRuntime("render", {
+			manifestPath: projectPath,
+			outputPath: resolvedOutput,
+			browserExecutable: animationBrowser(parsed),
+			overwrite: animationForce(parsed),
+		});
+	}
+	if (action === "preview") {
+		const parsed = animationParsed(tokens, command, { positional: 1, allowed });
+		const projectPath = animationPath(
+			parsed,
+			["--project", "--config", "-p"],
+			parsed.positional[0],
+			"--project",
+		);
+		if (!projectPath) {
+			throw Object.assign(new Error("animation preview requires a project path"), {
+				code: "CLI_ARGUMENT_ERROR",
+			});
+		}
+		return invokeAnimationRuntime("preview", {
+			manifestPath: projectPath,
+			port: animationNumeric(parsed, ["--port"], "--port", { integer: true, min: 0 }),
+		});
 	}
 }
 
@@ -2309,6 +2580,11 @@ export async function runCommand(argv) {
 				code: "CLI_ARGUMENT_ERROR",
 			});
 		}
+		if (root === "animation") {
+			const action = tokens[0] ?? "doctor";
+			commandName = `animation ${action}`;
+			return await animationCommand(tokens);
+		}
 		if (root === "verify") return await verifyCommand(tokens);
 		if (root === "actions") return await actionsCommand(tokens);
 		if (root === "scenes") return await scenesCommand(tokens);
@@ -2353,7 +2629,8 @@ if (invokedRealPath === SCRIPT_PATH) {
 	process.exitCode = output.ok ? 0 : output.error && argumentErrors.has(output.error.code) ? 2 : 1;
 	if (server && output.ok) {
 		const close = async () => {
-			await server.close().catch(() => undefined);
+			if (typeof server.close === "function") await server.close().catch(() => undefined);
+			else if (typeof server.kill === "function") server.kill("SIGTERM");
 			process.exit(0);
 		};
 		process.once("SIGINT", close);

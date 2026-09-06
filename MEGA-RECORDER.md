@@ -5,7 +5,7 @@ open-source desktop screen recorder and video editor.
 
 ## Pinned source
 
-- Product release: `v0.3.2`
+- Product release: `v0.4.0`
 - Upstream: <https://github.com/getopenscreen/openscreen>
 - Selected ref: `origin/main`
 - Selected commit: `cc7d514a93c828f52b5cf28a1aaf091c399f2bd1`
@@ -40,6 +40,34 @@ source. Use `--in-place` only when that mutation is intended. `--manifest path`
 records the pinned upstream commit, preset, Kokoro/model details, SHA-256 input
 and output hashes, and verification results under the versioned contract in
 `schemas/mega-recorder-project-manifest.schema.json`.
+
+## Optional Remotion animation
+
+`v0.4.0` adds an opt-in animation mode backed by the isolated runtime under
+`integrations/remotion/`. The product CLI exposes:
+
+```bash
+npm run --silent mega-recorder -- animation doctor
+npm run --silent mega-recorder -- animation setup
+npm run --silent mega-recorder -- animation init ./demo.animation.json
+npm run --silent mega-recorder -- animation validate ./demo.animation.json
+npm run --silent mega-recorder -- animation render ./demo.animation.json
+npm run --silent mega-recorder -- animation preview ./demo.animation.json
+```
+
+The `animation` manifest schema supports silent `animation` scenes and
+`mixed` scenes that combine local video/audio with title, diagram, and
+transition elements. Setup installs only the pinned Remotion 4.0.521 runtime;
+it is not part of the recording path. A recording-only checkout does not need
+Remotion, Electron/native capture helpers, or Kokoro. A silent animation also
+does not need those recording dependencies. `animation doctor` reports the
+optional capability and its local dependency state; missing animation files or
+packages do not make bootstrap reject a recording checkout.
+
+Preview serves localhost and prints a URL without opening a browser. Open that
+URL in the Codex in-app browser or Brave. See [`docs/remotion.md`](docs/remotion.md)
+for the manifest contract, local-media boundary, and separate Remotion license
+terms. The upstream app version remains `1.10.0`.
 
 ## Browser editor
 

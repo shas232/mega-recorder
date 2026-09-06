@@ -8,6 +8,44 @@ that come with them.
 npm dependencies are not listed here: they are resolved from `package.json` and
 distributed by their own registries, not redistributed inside our binaries.
 
+The optional Remotion integration is listed separately below because its license
+has terms that are different from this repository's MIT license.
+
+---
+
+## Remotion 4.0.521 — optional animation runtime
+
+- **Components**: the optional packages declared in
+  `integrations/remotion/package.json`, including `remotion`,
+  `@remotion/bundler`, `@remotion/media`, `@remotion/player`,
+  `@remotion/renderer`, and `@remotion/transitions`, all pinned to `4.0.521`
+  where applicable.
+- **Use**: local `animation` and `mixed` manifest rendering only. Remotion is
+  not required by recording-only workflows and is not part of the upstream
+  OpenScreen app version `1.10.0`.
+- **License**: Remotion's separate license, reproduced by reference at
+  <https://www.remotion.dev/license>. The source license for the pinned
+  `4.0.521` release is
+  <https://raw.githubusercontent.com/remotion-dev/remotion/v4.0.521/LICENSE.md>.
+  These terms are version-specific; reread the upstream license before moving
+  to another Remotion major version.
+- **Free-license eligibility**: the Remotion license lists individuals,
+  for-profit organizations with up to three employees, nonprofit or
+  not-for-profit organizations, and non-commercial evaluation as eligible for
+  its free terms. Eligible users may use Remotion commercially for creating
+  videos and images and may modify it for a custom use case or to contribute
+  improvements.
+- **Restrictions and company license**: the license disallows copying or
+  modifying Remotion code to sell, rent, license, relicense, or sublicense a
+  derivative of Remotion. A for-profit organization outside the listed free
+  eligibility must obtain a Remotion Company License. MEGA RECORDER does not
+  purchase, activate, or distribute that license; each user or organization is
+  responsible for evaluating its own eligibility and obligations.
+- **Assets and network**: the runtime uses local media by default and the
+  manifest schema defaults `allowRemoteAssets` to `false`. Running its setup
+  command may resolve the pinned packages from their registries; rendering and
+  preview do not require an AI provider or API key.
+
 ---
 
 ## FFmpeg — shared libraries (Windows only)

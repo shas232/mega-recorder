@@ -294,10 +294,10 @@ describe("host-agent action manifests", () => {
 					],
 				}),
 			);
-			await writeRecordingClock(clockPath, {
+			const clock = await writeRecordingClock(clockPath, {
 				...createRecordingClockReference({ startedAtEpochMs, monotonicMs: 1 }),
 				status: "stopped",
-				endedAtEpochMs: startedAtEpochMs + 3_000,
+				endedAtEpochMs: Math.round(startedAtEpochMs) + 3_000,
 				durationMs: 3_000,
 			});
 			await writeActionManifest(
@@ -312,7 +312,7 @@ describe("host-agent action manifests", () => {
 							point: { x: 0.2, y: 0.3 },
 							timestampSource: "recording-clock",
 							timestampAccuracy: "approximate",
-							observedAtEpochMs: startedAtEpochMs + 1_250,
+							observedAtEpochMs: clock.startedAtEpochMs + 1_250,
 						},
 					],
 				}),

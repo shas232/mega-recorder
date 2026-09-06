@@ -27,6 +27,8 @@ The standalone skill contains the pinned Git source and setup instructions. You 
 - Recording-clock action markers and native click-telemetry reconciliation.
 - Named scenes for targeted revisions to scripts, audio, labels, and framing.
 - New output files by default, with source preservation and export verification.
+- Optional local Remotion animation and mixed-media rendering, kept separate
+  from the recording runtime.
 
 Changing scene text does not itself regenerate speech: the host agent synthesizes and replaces the affected narration. Cursor motion requires real capture telemetry; browser DOM clicks alone do not necessarily move the OS pointer.
 
@@ -36,17 +38,23 @@ The automated native setup path is currently supported for macOS arm64/x64. Reco
 
 The browser editor is a local, token-protected editor—not a browser-only recorder or exporter. Native capture and final rendering run locally through Electron. The inherited standalone desktop app includes other upstream features; they are not prerequisites for the host-agent workflow.
 
+Remotion animation is opt-in. Recording-only workflows do not require the
+Remotion dependencies, Electron/native helpers, or Kokoro. For a silent
+animation, install the isolated runtime only when needed and follow the
+[Remotion animation guide](docs/remotion.md). The optional preview is
+loopback-only and should be opened in the Codex in-app browser or Brave.
+
 ## Developer quick start
 
 ```sh
-git clone --branch v0.3.2 --depth 1 https://github.com/shas232/mega-recorder.git
+git clone --branch v0.4.0 --depth 1 https://github.com/shas232/mega-recorder.git
 cd mega-recorder
 npm ci
 npm run build-vite
 node scripts/mega-recorder-cli.mjs --help
 ```
 
-Use the [skill](skills/mega-recorder/SKILL.md) for dependency, native-payload, and Kokoro setup. See the [CLI guide](docs/mega-recorder.md), [source and architecture notes](MEGA-RECORDER.md), and [contributor instructions](AGENTS.md) for details.
+Use the [skill](skills/mega-recorder/SKILL.md) for dependency, native-payload, and Kokoro setup. See the [CLI guide](docs/mega-recorder.md), [optional Remotion guide](docs/remotion.md), [source and architecture notes](MEGA-RECORDER.md), and [contributor instructions](AGENTS.md) for details.
 
 ## Credits and license
 

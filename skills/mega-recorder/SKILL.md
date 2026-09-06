@@ -1,6 +1,6 @@
 ---
 name: mega-recorder
-description: Operate the local-first MEGA RECORDER/OpenScreen workflow for recording, browser editing, local Kokoro narration, overlays, host computer-use actions, presets, verification, and export. Use when a host coding agent is asked to perform one of those workflows; do not use for unrelated video editing.
+description: "Create and revise local videos with MEGA RECORDER: OpenScreen recordings, Remotion animation-only videos, or mixed compositions, with optional local Kokoro narration. Use for these recording, animation, editing, and export workflows."
 ---
 
 # MEGA Recorder
@@ -8,6 +8,18 @@ description: Operate the local-first MEGA RECORDER/OpenScreen workflow for recor
 This file is intentionally standalone. It is written for the host agent (Codex, Claude Code, or a compatible coding agent), which supplies reasoning plus any available browser/computer-use capability. When this file is copied by itself, do not expect companion skill files: locate or clone the product first, then use the helpers in that checkout. Execute setup and one-time commands for the user rather than handing them a manual checklist. MEGA Recorder never requests or configures a separate AI provider, API key, or hosted agent; host-agent intelligence is outside the product.
 
 The editor supports a visible narration/audio lane, timed title/label/callout/lower-third text boxes with frame/screen positioning and style, and host-agent action markers that can derive callouts plus deterministic cursor-focused framing. Ripple cuts keep clips, audio, overlays, actions, annotations, and zooms aligned together. The host agent chooses which of those treatments the video actually needs; availability is not a reason to turn every treatment on.
+
+## Choose the video mode
+
+- **Recording only:** use the existing OpenScreen recording, crop, editing, and export workflow. Remotion is not installed or required.
+- **Animation only:** use the optional Remotion runtime to create the entire video from text, diagrams, graphics, and locally available assets. Do not start a screen recording or require Electron, native capture permissions, or Kokoro for a silent animation.
+- **Mixed:** capture and polish screen scenes in OpenScreen, export them, then compose those rendered clips with animation scenes in Remotion. Keep the original OpenScreen projects alongside the animation project for later revisions.
+
+Choose from the user's request; do not turn an animation-only request into a screen recording. The host agent writes and revises the composition—no additional AI provider is needed. After cloning the product, read `docs/remotion.md` for the supported animation commands, project schema, and optional setup. That document lives in Git, not beside this standalone skill.
+
+Use Brave or the Codex in-app browser for interactive preview and computer use. Do not open Chrome. For local Remotion rendering, use the supported Brave executable configuration rather than silently downloading a different browser. Rendering is a local encoding operation, not a substitute for recording real user actions.
+
+Remotion is separately licensed; preserve its notices and link its current license when handing this capability to a team. Do not imply the whole optional stack is MIT or universally free, purchase a license, or claim company-license eligibility without the user's information.
 
 ## Decide the treatment before capture
 
@@ -54,6 +66,18 @@ Use `--cursor editable-overlay` for recordings whose cursor should remain editab
 
 After capture, check that each action is in the intended source-time scene and that its point/rectangle lands on the target. Do not apply actions from a different take or rely on screenshot arrival order to infer timing.
 
+## Animation and mixed-video revisions
+
+Keep the animation manifest, editable composition source, and referenced assets—not only the finished MP4. Use stable scene IDs. Build a short low-resolution draft before a long render; keep rendering concurrency low on laptops.
+
+Custom React compositions are executable code, not sandboxed documents. Inspect unfamiliar supplied source before rendering it. Local-asset validation of a manifest does not prevent arbitrary custom code from making network requests; keep generated compositions local and do not add analytics, cloud uploads, or external services.
+
+For mixed videos, treat each imported recording's audio as already synchronized. Preserve it with the video, or explicitly mute it when replacing its narration; do not layer a duplicate voiceover. Transitions can overlap adjacent scenes and shorten the total duration. Use the runtime's calculated frame schedule for narration offsets, labels, and the final duration instead of adding raw scene lengths. Keep essential clicks and spoken phrases out of transition overlap windows.
+
+Synthesize narration with local Kokoro Sky when requested. Place the audio against the intended final scene schedule and verify its measured duration fits. A text edit requires regenerating and replacing that scene's audio; changing manifest text alone is not a voiceover update.
+
+When asked to revise animations, colors, wording, transitions, timing, or media, edit a sibling project and preserve unrelated scenes and original assets. Validate, render, and inspect the changed frames—including both sides of each transition—and check audio and export duration before delivery. Re-render the OpenScreen source scene first if the requested change affects its crop, cursor, or native effects.
+
 ## Keep rendered effects synchronized
 
 Persist named scenes with stable IDs using `scenes start`, `scenes add`, and `scenes apply`. Give each scene its source-time range and narration copy. Use `scenes list` to resolve a later request such as "change the reconciliation section" and `scenes revise <project> --scene-id <id> --text <copy> --output <revision>` to keep its identity while revising it. A scene's copy is metadata; changing it alone does not regenerate speech. Generate revised local Kokoro audio, replace the scene's previous narration track rather than stacking duplicates, and verify the new track against the surviving scene intervals after cuts. Label narration tracks with their stable scene ID so they remain identifiable. Preserve other scenes and their audio unless the user's requested change affects them.
@@ -82,7 +106,7 @@ The shared artifact remains this one `SKILL.md`; `agents/openai.yaml` and the he
 ## Product source and bootstrap
 
 - Canonical repository: `https://github.com/shas232/mega-recorder.git`
-- Pinned release: `v0.3.2` (use this tag unless the user explicitly requests another ref)
+- Pinned release: `v0.4.0` (use this tag unless the user explicitly requests another ref)
 - Per-user default checkout: `${MEGA_RECORDER_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/mega-recorder}/openscreen`
 
 1. Locate a valid existing checkout from `MEGA_RECORDER_HOME`, a configured product path, the current directory/ancestors, or generic home-relative locations. A valid checkout has `package.json` and `scripts/mega-recorder-cli.mjs`.
@@ -91,11 +115,11 @@ The shared artifact remains this one `SKILL.md`; `agents/openai.yaml` and the he
    ```sh
    MEGA_RECORDER_ROOT="${MEGA_RECORDER_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/mega-recorder}"
    mkdir -p "$MEGA_RECORDER_ROOT"
-   git clone --branch v0.3.2 --depth 1 https://github.com/shas232/mega-recorder.git "$MEGA_RECORDER_ROOT/openscreen"
+   git clone --branch v0.4.0 --depth 1 https://github.com/shas232/mega-recorder.git "$MEGA_RECORDER_ROOT/openscreen"
    ```
 
    Never clone over an existing directory or choose an arbitrary user path. Set `REPO` to the resolved checkout for all later commands.
-3. Verify the checkout's `mega-recorder.manifest.json` declares `productRelease: "v0.3.2"` and the crop, scenes, and recording-clock helpers exist before running its bootstrap helper. If the checkout is older, keep it intact and clone the pinned release into an unused sibling directory, then set `REPO` to that directory. Run `python3 "$REPO/skills/mega-recorder/scripts/bootstrap.py" --repo "$REPO" --ref v0.3.2 --no-bootstrap --json` to validate compatibility. Inspect its runtime report; install missing prerequisites using available official package managers, then run `npm ci` when dependencies are missing. Verify `node_modules/.bin/electron` and `node_modules/electron/dist` exist; run `npm rebuild electron --force` if the Electron runtime is missing or corrupt. Build with `npm run build-vite` after installation or a source update. Run `doctor.py --repo "$REPO" --json` before native capture/export. A missing operating-system permission may require the user's one-time interaction; do not claim setup is complete without the required tools.
+3. Verify the checkout's `mega-recorder.manifest.json` declares `productRelease: "v0.4.0"` and the crop, scenes, recording-clock, and optional Remotion integration files exist before running its bootstrap helper. If the checkout is older, keep it intact and clone the pinned release into an unused sibling directory, then set `REPO` to that directory. Run `python3 "$REPO/skills/mega-recorder/scripts/bootstrap.py" --repo "$REPO" --ref v0.4.0 --no-bootstrap --json` to validate compatibility. For animation-only work, follow `docs/remotion.md` and set up only its isolated runtime; the bootstrap's missing Electron/native tools do not block that mode. For recording or OpenScreen editing, inspect the runtime report; install missing prerequisites using available official package managers, then run `npm ci` when dependencies are missing. Verify `node_modules/.bin/electron` and `node_modules/electron/dist` exist; run `npm rebuild electron --force` if the Electron runtime is missing or corrupt. Build with `npm run build-vite` after installation or a source update. Run `doctor.py --repo "$REPO" --json` before native capture/export. A missing operating-system permission may require the user's one-time interaction; do not claim setup is complete without the required tools.
 4. Before every `record` or `export` on macOS, install the native payloads from the pinned upstream release with `python3 "$REPO/skills/mega-recorder/scripts/native_setup.py" --repo "$REPO" --ensure --json`, then rerun `doctor.py`. The helper detects arm64/x64, verifies the official archive SHA-256, extracts only the required signed ScreenCaptureKit/compositor/FFmpeg files into the checkout, and never reads `/Applications/Openscreen.app`. If the host is not a supported macOS architecture, leave native capture/export unverified and report the structured error.
 
 The repository contains the deterministic helpers and product assets needed after cloning: `bootstrap.py`, `doctor.py`, `kokoro_setup.py`, `install_skill.py`, `smoke.py`, and the bundled upstream-to-product patch. Do not require those files before the initial clone.
@@ -105,7 +129,7 @@ The repository contains the deterministic helpers and product assets needed afte
 - Inspection, presets, and verification use the existing CLI: `node "$REPO/scripts/mega-recorder-cli.mjs" <command>`. Preserve its stable JSON output.
 - Browser editing uses `node "$REPO/scripts/mega-recorder-cli.mjs" edit <project>`. Build with `npm run build-vite` when the checkout has no current `dist/`, then open the printed loopback URL in the browser tool. The server is disposable, token-authenticated, loopback-only, and project-scoped. The browser timeline visibly exposes video, audio/narration, overlays, host actions, annotations, speed, trims, zooms, camera, and playback controls; it has no BYO AI/provider configuration. Verify the persisted project readback after edits and stop the server after the task.
 - Local narration uses Kokoro only for TTS, which supports multiple voices. Before narration, run a fresh `kokoro doctor`; if it is not ready, automatically run `python3 "$REPO/skills/mega-recorder/scripts/kokoro_setup.py" --repo "$REPO" --json --ensure` and rerun `kokoro doctor`. Honor an explicit user-requested voice when the fresh doctor reports it; do not silently substitute another voice when that request is unavailable. When no voice was requested, prefer `af_sky` whenever the fresh doctor reports it. If `af_sky` is unavailable, choose a voice from the fresh doctor's reported list, disclose the exact fallback voice and reason, and keep that choice explicit in synthesis. Invoke the supported synthesis command with an explicit `--voice af_sky` for the preferred path (or `--voice <selected-voice>` for an explicit request/fallback); never rely on an implicit default. Model download/setup may use the network; narration text and synthesis stay local. Never configure or request a cloud TTS or other AI provider/API key.
-- Native `record` and `export` remain upstream Electron/native compatibility surfaces. Run doctor first, install/verify the pinned payloads on supported macOS hosts, perform them only when explicitly requested and supported, and report them as unverified or blocked unless the requested artifact and a fresh verification exist. Native MP4 export burns the persisted overlays/framing and mixes unmuted local audio/narration tracks; GIF export has no audio stream. The CLI drives a hidden Electron runner window; do not open a visible Electron desktop app, add Remotion, or fake unsupported editor panels.
+- Native `record` and `export` remain upstream Electron/native compatibility surfaces. Run doctor first, install/verify the pinned payloads on supported macOS hosts, perform them only when explicitly requested and supported, and report them as unverified or blocked unless the requested artifact and a fresh verification exist. Native MP4 export burns the persisted overlays/framing and mixes unmuted local audio/narration tracks; GIF export has no audio stream. The CLI drives a hidden Electron runner window; do not open a visible Electron desktop app or fake unsupported editor panels. Remotion is a separate optional composition/export path, not a replacement for native capture.
 
 ## Safety and handoff
 
